@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+dist/
+build/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual envs
+.venv/
+venv/
+env/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Runtime state — harness creates these during use; never commit
+.harness/
+# A local dev copy of the shared fleet dir shouldn't leak into the repo either
+.harness-dev/
+
+# Agent folders created inside the repo during testing
+**/.claude/settings.local.json
+
+# Logs
+*.log
+logs/
+
+# Ignore any cloned reference repos if someone develops alongside
+repos/
