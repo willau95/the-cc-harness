@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Inbox, ListChecks, Users } from "lucide-react";
-import { useNavigate, useParams } from "@/lib/router";
+import { Activity, Inbox, ListChecks, MessageSquare, Users } from "lucide-react";
+import { Link, useNavigate, useParams } from "@/lib/router";
 import { agentsApi } from "@/api/agents";
 import { fleetApi } from "@/api/fleet";
 import { queryKeys } from "@/lib/queryKeys";
@@ -14,6 +14,7 @@ import { PageSkeleton } from "@/components/PageSkeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { EventRow } from "@/components/EventRow";
 import { KillButton, PauseResumeButton } from "@/components/AgentActionButtons";
+import { Button } from "@/components/ui/button";
 import { timeAgo } from "@/lib/timeAgo";
 import { deriveAgentStatus } from "@/lib/status-colors";
 
@@ -96,6 +97,12 @@ export function AgentDetailPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" asChild>
+              <Link to={`/chat/${encodeURIComponent(agentId)}`}>
+                <MessageSquare className="h-4 w-4" />
+                Chat
+              </Link>
+            </Button>
             <PauseResumeButton
               isPaused={isPaused}
               onPause={() => action.mutate("pause")}

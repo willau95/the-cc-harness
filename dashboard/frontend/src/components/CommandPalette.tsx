@@ -4,6 +4,9 @@ import {
   CheckSquare,
   FolderKanban,
   LayoutDashboard,
+  Library,
+  ListChecks,
+  MessageSquare,
   Plus,
   Users,
 } from "lucide-react";
@@ -72,6 +75,14 @@ export function CommandPalette() {
             <Activity />
             <span>Events</span>
           </CommandItem>
+          <CommandItem onSelect={() => go("/arsenal")}>
+            <Library />
+            <span>Arsenal</span>
+          </CommandItem>
+          <CommandItem onSelect={() => go("/tasks")}>
+            <ListChecks />
+            <span>Tasks</span>
+          </CommandItem>
           <CommandItem onSelect={() => go("/proposals")}>
             <CheckSquare />
             <span>Proposals</span>
@@ -97,6 +108,19 @@ export function CommandPalette() {
                   <span className="ml-auto text-xs text-muted-foreground font-mono">
                     {a.role ?? ""}
                   </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+            <CommandSeparator />
+            <CommandGroup heading="Chat with agent">
+              {fleet.agents.slice(0, 10).map((a) => (
+                <CommandItem
+                  key={`chat-${a.agent_id}`}
+                  value={`chat ${a.agent_id} ${a.name ?? ""}`}
+                  onSelect={() => go(`/chat/${encodeURIComponent(a.agent_id)}`)}
+                >
+                  <MessageSquare />
+                  <span className="truncate">Chat: {a.name ?? a.agent_id}</span>
                 </CommandItem>
               ))}
             </CommandGroup>

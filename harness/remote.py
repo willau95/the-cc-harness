@@ -149,6 +149,38 @@ def push_message(machine: str, agent_id: str, envelope: dict) -> dict:
     return append_remote_jsonl(machine, remote_path, line)
 
 
+def bootstrap_peer_machine(machine: str) -> dict:
+    """Teach a peer machine who else is in the fleet by writing
+    ~/.harness/peers.yaml and ~/.fleet-machines.json on it. This lets the
+    remote machine's mailbox.send reach back to other peers (incl. us).
+    """
+    import yaml as _yaml
+    import os as _os
+    machines = list_machines()
+    me_name = config.machine_short()
+    me_user = _os.environ.get("USER", "unknown")
+    me_ip = "127.0.0.1"
+    try:
+        import subprocess as _sp
+        out = _sp.run(["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=3)
+        if out.returncode == 0 and out.stdout.strip():
+            me_ip = out.stdout.strip().splitlines()[0]
+    except Exception:
+        pass
+    master_entry = {"name": me_name, "user": me_user, "ip": me_ip}
+    all_peers = [m for m in machines if m["name"].lower() != machine.lower()]
+    all_peers.append(master_entry)
+    # Write peers.yaml
+    peers_yaml = _yaml.safe_dump({"machines": all_peers}, sort_keys=False)
+    safe_y = peers_yaml.replace("'", "'\"'\"'")
+    r1 = exec_remote(machine, f"mkdir -p \"$HOME/.harness\" && printf '%s' '{safe_y}' > \"$HOME/.harness/peers.yaml\"", timeout=15)
+    # Mirror fleet-machines.json for mac-fleet-control tooling + our remote.list_machines fallback
+    fm_json = json.dumps({"machines": all_peers}, indent=2).replace("'", "'\"'\"'")
+    r2 = exec_remote(machine, f"printf '%s' '{fm_json}' > \"$HOME/.fleet-machines.json\"", timeout=15)
+    return {"ok": r1.get("ok", False) and r2.get("ok", False),
+            "peers_count": len(all_peers)}
+
+
 def spawn_remote_agent(machine: str, role: str, name: str, folder: str,
                         initial_prompt: str | None = None) -> dict:
     """Scaffold a new agent on a remote machine (runs `harness init` there).
@@ -160,14 +192,29 @@ def spawn_remote_agent(machine: str, role: str, name: str, folder: str,
         f"mkdir -p '{folder_esc}' && cd '{folder_esc}' && "
         f"~/.local/bin/harness init --role {role} --name {name}"
     )
+    # 1. bootstrap peer machine with our peers table so it can reach back
+    bootstrap_peer_machine(machine)
+
+    # 2. run harness init on remote
     r = exec_remote(machine, cmd, timeout=60)
     if not r.get("ok"):
         return {"ok": False, "error": r.get("stderr") or r.get("error"),
                 "stdout": r.get("stdout")}
-    # Parse agent_id from stdout: "✓ Agent mads-mac-mini-kevin-f8909b1f initialized."
     import re
     match = re.search(r"Agent (\S+) initialized", r.get("stdout", ""))
     agent_id = match.group(1) if match else None
+
+    # 3. register locally (broadcast=True will push to other peers)
+    if agent_id:
+        from . import registry
+        registry.register({
+            "agent_id": agent_id,
+            "slug": name,
+            "role": role,
+            "machine": machine,
+            "folder": folder,
+            "remote": True,
+        })
     return {"ok": True, "agent_id": agent_id, "folder": folder, "machine": machine,
             "raw_output": r.get("stdout", "")}
 

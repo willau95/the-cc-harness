@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fleetApi } from "@/api/fleet";
 import { rolesApi } from "@/api/roles";
+import { machinesApi } from "@/api/machines";
 import { queryKeys } from "@/lib/queryKeys";
 import { useDialogs } from "@/context/DialogContext";
 import { useToast } from "@/context/ToastContext";
@@ -26,10 +27,19 @@ export function SpawnAgentDialog() {
   });
   const roles = rolesData?.roles ?? [];
 
+  const { data: machinesData } = useQuery({
+    queryKey: queryKeys.machines,
+    queryFn: () => machinesApi.list(),
+    enabled: spawnOpen,
+    staleTime: 30_000,
+  });
+  const machines = machinesData?.machines ?? [];
+
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
   const [folder, setFolder] = useState("");
   const [initialPrompt, setInitialPrompt] = useState("");
+  const [machine, setMachine] = useState<string>("__local__");
 
   useEffect(() => {
     if (!spawnOpen) {
@@ -38,6 +48,7 @@ export function SpawnAgentDialog() {
       setRole("");
       setFolder("");
       setInitialPrompt("");
+      setMachine("__local__");
     }
   }, [spawnOpen]);
 
@@ -48,6 +59,7 @@ export function SpawnAgentDialog() {
         role: role.trim(),
         folder: folder.trim(),
         initial_prompt: initialPrompt.trim() || undefined,
+        machine: machine && machine !== "__local__" ? machine : undefined,
       }),
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: queryKeys.fleet });
@@ -125,6 +137,31 @@ export function SpawnAgentDialog() {
                 onChange={(e) => setFolder(e.target.value)}
                 required
               />
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label htmlFor="spawn-machine">Machine</Label>
+              <Select value={machine} onValueChange={setMachine}>
+                <SelectTrigger id="spawn-machine" className="w-full">
+                  <SelectValue placeholder="This machine (local)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__local__">This machine (local)</SelectItem>
+                  {machines
+                    .filter((m) => !m.is_local)
+                    .map((m) => (
+                      <SelectItem key={m.name} value={m.name}>
+                        {m.name}
+                        {m.user && m.ip ? ` · ${m.user}@${m.ip}` : ""}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+              {machinesData && !machinesData.fleet_ssh_available && machine !== "__local__" && (
+                <p className="text-xs text-yellow-600 dark:text-yellow-400">
+                  Remote spawn requires fleet SSH to be available.
+                </p>
+              )}
             </div>
 
             <div className="grid gap-1.5">

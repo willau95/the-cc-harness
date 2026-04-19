@@ -159,7 +159,7 @@ def spawn(role: str, name: str, folder: str | Path,
     heartbeat.beat(ident["agent_id"], via="spawn")
 
     eventlog.log("human@dashboard", "spawned",
-                 agent_id=ident["agent_id"], role=role, folder=str(folder))
+                 new_agent_id=ident["agent_id"], role=role, folder=str(folder))
     return {"ok": True, "agent_id": ident["agent_id"],
             "folder": str(folder), "role": role}
 

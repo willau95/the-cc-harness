@@ -125,12 +125,58 @@ def api_arsenal(q: str = "", limit: int = 30) -> dict:
     return {"trust_distribution": dist, "results": results}
 
 
+# Static paths MUST come before /{slug} so FastAPI doesn't capture them as slug.
+@app.get("/api/arsenal/list")
+def api_arsenal_list(trust: str | None = None, limit: int = 100) -> dict:
+    """Full listing (not just search). Used by /arsenal page."""
+    import sqlite3
+    conn = sqlite3.connect(config.arsenal_db_path())
+    try:
+        if trust:
+            rows = conn.execute(
+                "SELECT slug, title, trust, produced_by, produced_at, source_refs, tags, chain_depth "
+                "FROM items WHERE trust = ? ORDER BY produced_at DESC LIMIT ?",
+                (trust, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT slug, title, trust, produced_by, produced_at, source_refs, tags, chain_depth "
+                "FROM items ORDER BY produced_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+    finally:
+        conn.close()
+    items = [{
+        "slug": r[0], "title": r[1], "trust": r[2], "produced_by": r[3],
+        "produced_at": r[4], "source_refs": r[5], "tags": r[6],
+        "chain_depth": r[7],
+    } for r in rows]
+    return {"count": len(items), "items": items,
+            "trust_distribution": arsenal.trust_distribution()}
+
+
+@app.post("/api/arsenal/add")
+def api_arsenal_add(req: ArsenalAddRequest) -> dict:
+    meta = arsenal.add(
+        slug=req.slug, title=req.title, content=req.content, tags=req.tags,
+        source_type=req.source_type, source_refs=req.source_refs,
+        produced_by="human@dashboard",
+    )
+    return {"ok": True, "meta": meta}
+
+
 @app.get("/api/arsenal/{slug}")
 def api_arsenal_get(slug: str) -> dict:
     item = arsenal.get(slug)
     if not item:
         return JSONResponse({"error": "not_found"}, status_code=404)
     return item
+
+
+@app.post("/api/arsenal/{slug}/trust")
+def api_arsenal_set_trust(slug: str, req: ArsenalTrustRequest) -> dict:
+    arsenal.set_trust(slug, req.trust, by="human@dashboard")
+    return {"ok": True, "slug": slug, "trust": req.trust}
 
 
 @app.get("/api/projects")
@@ -344,51 +390,7 @@ def api_tasks() -> dict:
     return {"count": len(out), "tasks": out}
 
 
-# ===== Arsenal enhanced =====
-
-@app.get("/api/arsenal/list")
-def api_arsenal_list(trust: str | None = None, limit: int = 100) -> dict:
-    """Full listing (not just search). Used by /arsenal page."""
-    import sqlite3
-    conn = sqlite3.connect(config.arsenal_db_path())
-    try:
-        if trust:
-            rows = conn.execute(
-                "SELECT slug, title, trust, produced_by, produced_at, source_refs, tags, chain_depth "
-                "FROM items WHERE trust = ? ORDER BY produced_at DESC LIMIT ?",
-                (trust, limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT slug, title, trust, produced_by, produced_at, source_refs, tags, chain_depth "
-                "FROM items ORDER BY produced_at DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
-    finally:
-        conn.close()
-    items = [{
-        "slug": r[0], "title": r[1], "trust": r[2], "produced_by": r[3],
-        "produced_at": r[4], "source_refs": r[5], "tags": r[6],
-        "chain_depth": r[7],
-    } for r in rows]
-    return {"count": len(items), "items": items,
-            "trust_distribution": arsenal.trust_distribution()}
-
-
-@app.post("/api/arsenal/add")
-def api_arsenal_add(req: ArsenalAddRequest) -> dict:
-    meta = arsenal.add(
-        slug=req.slug, title=req.title, content=req.content, tags=req.tags,
-        source_type=req.source_type, source_refs=req.source_refs,
-        produced_by="human@dashboard",
-    )
-    return {"ok": True, "meta": meta}
-
-
-@app.post("/api/arsenal/{slug}/trust")
-def api_arsenal_set_trust(slug: str, req: ArsenalTrustRequest) -> dict:
-    arsenal.set_trust(slug, req.trust, by="human@dashboard")
-    return {"ok": True, "slug": slug, "trust": req.trust}
+# (arsenal endpoints defined above, in route-order-safe block)
 
 
 @app.post("/api/fleet/bulk")
