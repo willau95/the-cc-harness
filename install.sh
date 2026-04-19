@@ -36,11 +36,15 @@ echo
 install_with_uv() {
     echo "→ uv tool install --editable $REPO_ROOT"
     uv tool install --force --editable "$REPO_ROOT"
+    # Ensure ~/.local/bin is on PATH (uv edits shell rc idempotently)
+    uv tool update-shell || true
 }
 
 install_with_pipx() {
     echo "→ pipx install --editable $REPO_ROOT"
     pipx install --force --editable "$REPO_ROOT"
+    # Ensure ~/.local/bin is on PATH (pipx edits shell rc idempotently)
+    pipx ensurepath || true
 }
 
 if command -v uv >/dev/null 2>&1; then
@@ -72,20 +76,27 @@ fi
 echo
 
 # ---------- Verify CLI is on PATH ----------
+# uv/pipx just updated the shell rc, but THIS shell wasn't reloaded yet.
+# Test with an explicit ~/.local/bin check so we don't false-fail.
+export PATH="$HOME/.local/bin:$PATH"
+
 if command -v harness >/dev/null 2>&1; then
     echo "✓ harness CLI: $(command -v harness)"
 else
     cat <<'EOS'
 
-[!] 'harness' is installed but not yet on PATH. Try:
+[!] 'harness' was installed but is not on PATH in this shell.
 
-    # If you used uv:
-    uv tool update-shell
+The shell config (~/.zshrc or ~/.bashrc) was updated by uv/pipx so new shells
+will have it. To make THIS shell see it, run one of:
 
-    # Or: open a new shell, or add ~/.local/bin to PATH manually:
-    echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+    exec zsh                    # or bash — reloads this shell
+    source ~/.zshrc             # reload rc in place
+    open a new terminal window
+
+Then re-run:  harness join
 EOS
-    exit 1
+    exit 0
 fi
 echo
 
