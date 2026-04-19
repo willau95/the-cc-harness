@@ -33,7 +33,7 @@ export function Sidebar() {
   const pending = stats?.pending_proposals ?? 0;
 
   return (
-    <aside className="w-60 shrink-0 border-r border-border bg-sidebar flex flex-col">
+    <aside className="w-60 h-full shrink-0 border-r border-border bg-sidebar flex flex-col">
       <div className="h-12 shrink-0 px-3 border-b border-border flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <div className="h-6 w-6 rounded-md bg-primary text-primary-foreground flex items-center justify-center text-xs font-semibold shrink-0">
