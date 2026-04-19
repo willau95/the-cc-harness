@@ -7,6 +7,9 @@ import { EventsPage } from "@/pages/Events";
 import { ProjectsPage } from "@/pages/Projects";
 import { ProjectDetailPage } from "@/pages/ProjectDetail";
 import { ProposalsPage } from "@/pages/Proposals";
+import { ArsenalPage, ArsenalDetailPage } from "@/pages/Arsenal";
+import { TasksPage } from "@/pages/Tasks";
+import { ChatPage } from "@/pages/Chat";
 import { NotFoundPage } from "@/pages/NotFound";
 
 export function App() {
@@ -23,6 +26,11 @@ export function App() {
         <Route path="/projects/:proj" element={<ProjectDetailPage />} />
         <Route path="/proposals" element={<ProposalsPage />} />
         <Route path="/proposals/:tab" element={<ProposalsPage />} />
+        <Route path="/arsenal" element={<ArsenalPage />} />
+        <Route path="/arsenal/:slug" element={<ArsenalDetailPage />} />
+        <Route path="/tasks" element={<TasksPage />} />
+        <Route path="/tasks/:tab" element={<TasksPage />} />
+        <Route path="/chat/:agentId" element={<ChatPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

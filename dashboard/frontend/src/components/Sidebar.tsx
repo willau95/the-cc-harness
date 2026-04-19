@@ -4,6 +4,8 @@ import {
   FolderKanban,
   Gauge,
   LayoutDashboard,
+  Library,
+  ListChecks,
   Search,
   Users,
 } from "lucide-react";
@@ -53,9 +55,11 @@ export function Sidebar() {
           <SidebarNavItem to="/dashboard" label="Dashboard" icon={LayoutDashboard} />
           <SidebarNavItem to="/fleet" label="Fleet" icon={Users} liveCount={liveCount} />
           <SidebarNavItem to="/events" label="Events" icon={Activity} />
+          <SidebarNavItem to="/arsenal" label="Arsenal" icon={Library} />
         </div>
 
         <SidebarSection label="Work">
+          <SidebarNavItem to="/tasks" label="Tasks" icon={ListChecks} />
           <SidebarNavItem to="/proposals" label="Proposals" icon={CheckSquare} badge={pending} badgeTone="default" />
           <SidebarNavItem to="/projects" label="Projects" icon={FolderKanban} />
         </SidebarSection>

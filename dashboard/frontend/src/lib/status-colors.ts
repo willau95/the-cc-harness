@@ -61,6 +61,22 @@ export const agentStatusDot: Record<string, string> = {
 export const agentStatusDotDefault = "bg-neutral-400";
 
 /**
+ * Trust-level badge colors for arsenal items.
+ * verified=green, peer_verified=cyan, agent_summary=gray,
+ * hypothesis=yellow, retracted=red, human_verified=emerald.
+ */
+export const trustBadge: Record<string, string> = {
+  verified: "bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300",
+  human_verified: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300",
+  peer_verified: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/50 dark:text-cyan-300",
+  agent_summary: "bg-muted text-muted-foreground",
+  hypothesis: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/50 dark:text-yellow-300",
+  retracted: "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300",
+};
+
+export const trustBadgeDefault = "bg-muted text-muted-foreground";
+
+/**
  * Derive an agent status label from registry/heartbeat fields.
  * Order: paused > stale > running > online/idle.
  */

@@ -19,4 +19,14 @@ export const queryKeys = {
     ["proposals", status ?? "any", kind ?? "any"] as const,
   proposalsAll: ["proposals"] as const,
   roles: ["roles"] as const,
+  arsenal: {
+    all: ["arsenal"] as const,
+    list: (trust?: string) => ["arsenal", "list", trust ?? "all"] as const,
+    detail: (slug: string) => ["arsenal", "detail", slug] as const,
+  },
+  tasks: {
+    all: ["tasks"] as const,
+  },
+  chat: (agentId: string) => ["chat", agentId] as const,
+  machines: ["machines"] as const,
 };

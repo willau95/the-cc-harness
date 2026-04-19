@@ -6,4 +6,8 @@ export { projectsApi } from "./projects";
 export { proposalsApi } from "./proposals";
 export { statsApi } from "./stats";
 export { rolesApi } from "./roles";
+export { arsenalApi } from "./arsenal";
+export { tasksApi } from "./tasks";
+export { chatApi } from "./chat";
+export { machinesApi } from "./machines";
 export type * from "./types";

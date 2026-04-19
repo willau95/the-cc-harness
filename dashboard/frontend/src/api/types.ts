@@ -112,6 +112,7 @@ export interface SpawnBody {
   name: string;
   folder: string;
   initial_prompt?: string;
+  machine?: string;
 }
 
 export interface BulkBody {
@@ -126,4 +127,97 @@ export interface Role {
 
 export interface RolesResponse {
   roles: Role[];
+}
+
+// ─── Arsenal ────────────────────────────────────────────────────────────────
+
+export interface ArsenalItem {
+  slug: string;
+  title: string;
+  trust: string;
+  produced_by?: string | null;
+  produced_at?: string | null;
+  source_refs?: string | null;
+  tags?: string | null;
+  chain_depth?: number | null;
+  [key: string]: unknown;
+}
+
+export interface ArsenalListResponse {
+  count: number;
+  items: ArsenalItem[];
+  trust_distribution: Record<string, number>;
+}
+
+export interface ArsenalItemDetail {
+  slug: string;
+  title: string;
+  trust: string;
+  content?: string;
+  tags?: string | string[] | null;
+  source_type?: string | null;
+  source_refs?: string | string[] | null;
+  produced_by?: string | null;
+  produced_at?: string | null;
+  verification_status?: string | null;
+  chain_depth?: number | null;
+  derived_from?: string | string[] | null;
+  [key: string]: unknown;
+}
+
+// ─── Tasks ──────────────────────────────────────────────────────────────────
+
+export interface TaskItem {
+  task_id: string;
+  state: string;
+  original_goal?: string | null;
+  next_step?: string | null;
+  blocked_on?: string | null;
+  task_budget?: Record<string, unknown> | null;
+  agent_id?: string | null;
+  role?: string | null;
+  folder?: string | null;
+  project?: string | null;
+  ts?: string | null;
+  [key: string]: unknown;
+}
+
+export interface TasksResponse {
+  count: number;
+  tasks: TaskItem[];
+}
+
+// ─── Chat ───────────────────────────────────────────────────────────────────
+
+export interface ChatMessage {
+  msg_id: string;
+  from?: string | null;
+  to?: string | null;
+  subject?: string | null;
+  body?: string | null;
+  created_at?: string | null;
+  direction: "inbound" | "outbound";
+  [key: string]: unknown;
+}
+
+export interface ChatThread {
+  agent_id: string;
+  count: number;
+  thread: ChatMessage[];
+}
+
+// ─── Machines ───────────────────────────────────────────────────────────────
+
+export interface Machine {
+  name: string;
+  user?: string | null;
+  ip?: string | null;
+  is_local?: boolean;
+  [key: string]: unknown;
+}
+
+export interface MachinesResponse {
+  count: number;
+  machines: Machine[];
+  fleet_ssh_available: boolean;
 }

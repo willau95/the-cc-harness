@@ -52,8 +52,27 @@ def send(from_id: str, to_id: str, subject: str, body: str,
         "provenance_chain": (provenance_chain or []) + [from_id],
         "reply_to_msg_id": reply_to_msg_id,
     }
-    append_jsonl(inbox_path(to_id), envelope)
-    eventlog.log(from_id, "sent_message", to=to_id, subject=subject, msg_id=envelope["msg_id"])
+    # Route: if the target agent lives on a remote machine per the registry,
+    # push to the remote inbox via SSH / fleet-ssh. Otherwise local append.
+    from . import registry, remote
+    target_entry = registry.find(to_id)
+    target_machine = (target_entry or {}).get("machine")
+    if target_machine and not remote.is_local_machine(target_machine):
+        r = remote.push_message(target_machine, to_id, envelope)
+        if not r.get("ok"):
+            # Fallback: local append (at least the sender's fleet view has it)
+            append_jsonl(inbox_path(to_id), envelope)
+            eventlog.log(from_id, "sent_message_remote_fallback",
+                         to=to_id, subject=subject, msg_id=envelope["msg_id"],
+                         error=str(r.get("error") or r.get("stderr")))
+        else:
+            eventlog.log(from_id, "sent_message", to=to_id, subject=subject,
+                         msg_id=envelope["msg_id"], via="remote",
+                         machine=target_machine)
+    else:
+        append_jsonl(inbox_path(to_id), envelope)
+        eventlog.log(from_id, "sent_message", to=to_id, subject=subject,
+                     msg_id=envelope["msg_id"])
     return envelope
 
 

@@ -19,8 +19,8 @@ if str(REPO_ROOT) not in sys.path:
 
 from harness import config, registry, heartbeat, arsenal, mailbox, eventlog
 from harness import project, proposals, checkpoint, identity as ident_mod
-from harness import control as fleet_control
-from harness._util import read_jsonl
+from harness import control as fleet_control, remote as fleet_remote
+from harness._util import read_jsonl, now_iso
 
 # Pydantic for request bodies
 from pydantic import BaseModel
@@ -31,11 +31,31 @@ class SpawnRequest(BaseModel):
     name: str
     folder: str
     initial_prompt: str | None = None
+    machine: str | None = None  # None = local; else fleet-ssh target name
 
 
 class BulkRequest(BaseModel):
     action: str
     agent_ids: list[str]
+
+
+class ChatSendRequest(BaseModel):
+    body: str
+    subject: str | None = None
+    from_id: str | None = None  # defaults to "human@dashboard"
+
+
+class ArsenalAddRequest(BaseModel):
+    slug: str | None = None
+    title: str
+    content: str
+    tags: list[str] = []
+    source_type: str = "human_input"
+    source_refs: list[str] = []
+
+
+class ArsenalTrustRequest(BaseModel):
+    trust: str  # human_verified | retracted | peer_verified | ...
 
 app = FastAPI(title="Claude Harness Dashboard", version="0.1.0")
 
@@ -204,13 +224,171 @@ def api_kill(agent_id: str) -> dict:
 
 @app.post("/api/fleet/spawn")
 def api_spawn(req: SpawnRequest) -> dict:
-    r = fleet_control.spawn(
-        role=req.role, name=req.name,
-        folder=req.folder, initial_prompt=req.initial_prompt,
-    )
+    if req.machine and not fleet_remote.is_local_machine(req.machine):
+        # Remote spawn via fleet-ssh
+        r = fleet_remote.spawn_remote_agent(
+            machine=req.machine, role=req.role, name=req.name,
+            folder=req.folder, initial_prompt=req.initial_prompt,
+        )
+    else:
+        r = fleet_control.spawn(
+            role=req.role, name=req.name,
+            folder=req.folder, initial_prompt=req.initial_prompt,
+        )
     if not r.get("ok"):
         return JSONResponse(r, status_code=400)
     return r
+
+
+@app.get("/api/machines")
+def api_machines() -> dict:
+    """List machines known in the fleet (from mac-fleet-control registry)."""
+    machines = fleet_remote.all_machines_including_local()
+    return {"count": len(machines), "machines": machines,
+            "fleet_ssh_available": fleet_remote.fleet_ssh_available()}
+
+
+@app.get("/api/fleet-all")
+def api_fleet_all() -> dict:
+    """Local fleet + peers on remote machines (best-effort aggregation)."""
+    local = registry.live_agents()
+    local_enriched = []
+    for ag in local:
+        aid = ag["agent_id"]
+        local_enriched.append({
+            **ag, "last_beat": heartbeat.last_beat(aid),
+            "stale": heartbeat.stale(aid), "remote_machine": None,
+        })
+    remote_all: list[dict] = []
+    errors: list[dict] = []
+    if fleet_remote.fleet_ssh_available():
+        for m in fleet_remote.all_machines_including_local():
+            if m.get("is_local") or m.get("synthetic"):
+                continue
+            try:
+                peers = fleet_remote.list_remote_fleet(m["name"])
+                remote_all.extend(peers)
+            except Exception as e:
+                errors.append({"machine": m["name"], "error": str(e)})
+    return {
+        "local": local_enriched,
+        "remote": remote_all,
+        "errors": errors,
+        "total": len(local_enriched) + len(remote_all),
+    }
+
+
+# ===== Chat gateway (dashboard ↔ agent mailbox) =====
+
+@app.get("/api/chat/{agent_id}")
+def api_chat_thread(agent_id: str, limit: int = 50) -> dict:
+    """Return the conversation thread with this agent: inbox + outbox union,
+    ordered by created_at ascending. Dashboard renders as a chat."""
+    # Inbox to this agent (messages TO it)
+    inbox_lines = list(read_jsonl(mailbox.inbox_path(agent_id)))
+    # Outbox from this agent — reconstruct by reading other agents' inboxes
+    # where this agent is the sender. For v1 we approximate via events.
+    events = eventlog.for_agent_today(agent_id)
+    outbox: list[dict] = []
+    for e in events:
+        if e.get("type") in ("sent_message", "sent_message_remote_fallback"):
+            outbox.append({
+                "msg_id": e.get("msg_id"),
+                "from": agent_id,
+                "to": e.get("to"),
+                "subject": e.get("subject"),
+                "body": "(outbound — stored in recipient's inbox)",
+                "created_at": e.get("ts"),
+                "direction": "outbound",
+            })
+    inbound = [{**m, "direction": "inbound"} for m in inbox_lines]
+    thread = sorted(inbound + outbox, key=lambda x: x.get("created_at") or "")
+    return {"agent_id": agent_id, "count": len(thread), "thread": thread[-limit:]}
+
+
+@app.post("/api/chat/{agent_id}/send")
+def api_chat_send(agent_id: str, req: ChatSendRequest) -> dict:
+    """Human sends a message to an agent via the dashboard."""
+    env = mailbox.send(
+        from_id=req.from_id or "human@dashboard",
+        to_id=agent_id,
+        subject=req.subject or "user_message",
+        body=req.body,
+    )
+    return {"ok": True, "msg_id": env["msg_id"], "envelope": env}
+
+
+# ===== Tasks aggregator (cross-agent active tasks) =====
+
+@app.get("/api/tasks")
+def api_tasks() -> dict:
+    """Aggregate active tasks across all local agents (paginated/filterable)."""
+    out: list[dict] = []
+    for ag in registry.live_agents():
+        folder = Path(ag.get("folder", ""))
+        if not folder.exists():
+            continue
+        try:
+            tasks = checkpoint.active_tasks(folder)
+            for t in tasks:
+                out.append({
+                    **t,
+                    "agent_id": ag["agent_id"],
+                    "role": ag.get("role"),
+                    "folder": str(folder),
+                    "project": folder.name,
+                })
+        except Exception:
+            continue
+    out.sort(key=lambda t: t.get("ts", ""), reverse=True)
+    return {"count": len(out), "tasks": out}
+
+
+# ===== Arsenal enhanced =====
+
+@app.get("/api/arsenal/list")
+def api_arsenal_list(trust: str | None = None, limit: int = 100) -> dict:
+    """Full listing (not just search). Used by /arsenal page."""
+    import sqlite3
+    conn = sqlite3.connect(config.arsenal_db_path())
+    try:
+        if trust:
+            rows = conn.execute(
+                "SELECT slug, title, trust, produced_by, produced_at, source_refs, tags, chain_depth "
+                "FROM items WHERE trust = ? ORDER BY produced_at DESC LIMIT ?",
+                (trust, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT slug, title, trust, produced_by, produced_at, source_refs, tags, chain_depth "
+                "FROM items ORDER BY produced_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+    finally:
+        conn.close()
+    items = [{
+        "slug": r[0], "title": r[1], "trust": r[2], "produced_by": r[3],
+        "produced_at": r[4], "source_refs": r[5], "tags": r[6],
+        "chain_depth": r[7],
+    } for r in rows]
+    return {"count": len(items), "items": items,
+            "trust_distribution": arsenal.trust_distribution()}
+
+
+@app.post("/api/arsenal/add")
+def api_arsenal_add(req: ArsenalAddRequest) -> dict:
+    meta = arsenal.add(
+        slug=req.slug, title=req.title, content=req.content, tags=req.tags,
+        source_type=req.source_type, source_refs=req.source_refs,
+        produced_by="human@dashboard",
+    )
+    return {"ok": True, "meta": meta}
+
+
+@app.post("/api/arsenal/{slug}/trust")
+def api_arsenal_set_trust(slug: str, req: ArsenalTrustRequest) -> dict:
+    arsenal.set_trust(slug, req.trust, by="human@dashboard")
+    return {"ok": True, "slug": slug, "trust": req.trust}
 
 
 @app.post("/api/fleet/bulk")
