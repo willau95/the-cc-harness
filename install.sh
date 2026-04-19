@@ -103,8 +103,41 @@ echo
 # ---------- 3. Scaffold ~/.harness/ ----------
 echo "→ scaffolding ~/.harness/ ..."
 harness join || true
-
 echo
+
+# ---------- 4. Dashboard frontend (Node + Vite build) ----------
+# The dashboard UI is a Vite + React app that must be built once before
+# `harness dashboard` can serve it. If Node is missing, we install via brew.
+FRONTEND_DIR="$REPO_ROOT/dashboard/frontend"
+if [ -f "$FRONTEND_DIR/package.json" ]; then
+    echo "→ Installing dashboard UI dependencies..."
+    if ! command -v node >/dev/null 2>&1; then
+        if command -v brew >/dev/null 2>&1; then
+            echo "  Node not found; brew install node..."
+            brew install node
+        else
+            echo "[!] Node.js not found, no brew. Install Node manually, then re-run."
+            echo "    (The CLI works without the UI — skipping UI build.)"
+        fi
+    fi
+    if command -v node >/dev/null 2>&1; then
+        (
+            cd "$FRONTEND_DIR"
+            if command -v pnpm >/dev/null 2>&1; then
+                pnpm install && pnpm run build
+            elif command -v npm >/dev/null 2>&1; then
+                npm install && npm run build
+            else
+                echo "[!] No npm/pnpm found — skipping UI build."
+            fi
+        )
+        if [ -d "$FRONTEND_DIR/dist" ]; then
+            echo "  ✓ Dashboard UI built at $FRONTEND_DIR/dist"
+        fi
+    fi
+fi
+echo
+
 echo "=== done ==="
 echo
 echo "Next:"

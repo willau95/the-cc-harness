@@ -162,9 +162,44 @@ other open projects. Credit where it's due:
 ## Requirements
 
 - macOS (Linux should mostly work; no Windows testing yet)
-- Python 3.11+
-- [Syncthing](https://syncthing.net/) (for cross-machine mode)
-- Claude Code
+- Python 3.11+ (installed via system / brew)
+- Node.js 20+ (dashboard UI build — auto-installed by `./install.sh` via brew)
+- [Syncthing](https://syncthing.net/) (for cross-machine mode; auto-installed)
+- Claude Code CLI
+- One of: [uv](https://docs.astral.sh/uv/) or [pipx](https://pipx.pypa.io/) (auto-installed by `install.sh` via brew if missing)
+
+## Troubleshooting
+
+### `claude` reports "Unable to connect to API (ConnectionRefused)"
+Check your shell env:
+```bash
+echo $ANTHROPIC_BASE_URL
+```
+If it's set to `http://127.0.0.1:<port>`, you have a local Claude proxy tool
+(cc-switch / claude-code-router / vibeproxy) configured but its daemon isn't
+running. Either start the proxy, or:
+```bash
+unset ANTHROPIC_BASE_URL
+```
+…for a one-off session. For permanent, remove the export from `~/.zshrc`.
+
+### `harness` not on PATH after install
+The `install.sh` runs `pipx ensurepath` / `uv tool update-shell` to add
+`~/.local/bin` to your shell rc, but the current shell needs a reload:
+```bash
+exec zsh       # or: source ~/.zshrc
+```
+
+### Hooks don't fire when `claude` starts
+Claude Code's settings-watcher only registers hooks from
+`.claude/settings.local.json` that existed **when the session started**.
+`harness init` creates the file — but if `claude` was already running,
+restart it. Or use `/hooks` inside Claude Code to force a reload.
+
+### Agent is shown as "zombie" in the dashboard even though Claude Code is open
+`harness init` was run with an older `_common.py` that didn't auto-heartbeat.
+Re-run `harness init --role <your-role> --name <your-name>` in the agent
+folder — it's idempotent and will install the updated skill tools.
 
 ---
 

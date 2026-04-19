@@ -258,14 +258,37 @@ async def ws_stream(ws: WebSocket):
 
 
 # ===== Frontend (static) =====
+# Vite builds into dashboard/frontend/dist/. Serve that. If not built, fall
+# back to a friendly "run install.sh or npm run build" message.
+
+DIST_DIR = FRONTEND_DIR / "dist"
+
 
 @app.get("/")
 def root() -> Any:
-    idx = FRONTEND_DIR / "index.html"
+    idx = DIST_DIR / "index.html"
     if idx.exists():
         return FileResponse(idx)
-    return JSONResponse({"note": "frontend not built yet"})
+    return JSONResponse({
+        "note": "dashboard UI not built. Run: cd dashboard/frontend && npm install && npm run build "
+                "(or re-run ./install.sh)",
+    }, status_code=503)
 
 
-if FRONTEND_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+# Serve built Vite assets at /assets/* (that's where Vite puts them)
+if DIST_DIR.exists():
+    assets_dir = DIST_DIR / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+    # Catch-all for SPA routes (so / reloading works)
+    from fastapi import Request
+
+    @app.get("/{spa_path:path}")
+    def spa_catchall(spa_path: str, request: Request) -> Any:
+        # Let /api and /ws pass through to their handlers
+        if spa_path.startswith(("api/", "ws/")):
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        idx = DIST_DIR / "index.html"
+        if idx.exists():
+            return FileResponse(idx)
+        return JSONResponse({"error": "ui_not_built"}, status_code=503)
