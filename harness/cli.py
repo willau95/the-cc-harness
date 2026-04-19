@@ -395,11 +395,18 @@ def arsenal_dump_json(limit):
 
 @arsenal_cmd.command(name="get")
 @click.argument("slug")
-def arsenal_get(slug):
+@click.option("--json", "as_json", is_flag=True, help="Emit full item as JSON (used by dashboard for cross-machine fetch)")
+def arsenal_get(slug, as_json):
     item = arsenal.get(slug)
     if not item:
+        if as_json:
+            click.echo(json.dumps({"error": "not_found", "slug": slug}))
+            sys.exit(1)
         click.echo("(not found)", err=True)
         sys.exit(1)
+    if as_json:
+        click.echo(json.dumps(item, default=str))
+        return
     click.echo(f"# {item['title']}")
     click.echo(f"_trust: {item['trust']} · produced_by: {item['produced_by']}_\n")
     click.echo(item["content"])

@@ -130,6 +130,20 @@ def _parallel_remote(machines: list[dict], fn: Callable[[dict], Any]) -> list[An
 
 # ===== REST =====
 
+def _paused_for(ag: dict) -> bool:
+    """Check the .harness/paused sentinel for any agent whose folder we can reach.
+    Remote agents (different machine) resolve to False here — AgentDetail only
+    ever renders for agents whose folder is local-readable anyway.
+    """
+    folder = ag.get("folder")
+    if not folder:
+        return False
+    try:
+        return fleet_control.is_paused(Path(folder))
+    except Exception:
+        return False
+
+
 @app.get("/api/fleet")
 def api_fleet() -> dict:
     agents = registry.live_agents()
@@ -138,7 +152,8 @@ def api_fleet() -> dict:
         aid = ag["agent_id"]
         last = heartbeat.last_beat(aid)
         stale = heartbeat.stale(aid)
-        enriched.append({**ag, "last_beat": last, "stale": stale})
+        enriched.append({**ag, "last_beat": last, "stale": stale,
+                         "paused": _paused_for(ag)})
     return {"count": len(enriched), "agents": enriched}
 
 
@@ -147,6 +162,7 @@ def api_agent(agent_id: str) -> dict:
     ag = registry.find(agent_id)
     if not ag:
         return JSONResponse({"error": "not_found"}, status_code=404)
+    ag = {**ag, "paused": _paused_for(ag)}
     last = heartbeat.last_beat(agent_id)
     stale = heartbeat.stale(agent_id)
     # checkpoint for agents whose folder is accessible from this machine
@@ -282,9 +298,68 @@ def api_arsenal_add(req: ArsenalAddRequest) -> dict:
 @app.get("/api/arsenal/{slug}")
 def api_arsenal_get(slug: str) -> dict:
     item = arsenal.get(slug)
-    if not item:
-        return JSONResponse({"error": "not_found"}, status_code=404)
-    return item
+    if item:
+        return {**item, "machine": None}
+    # Fall back to remote peers — an item in the listing might live elsewhere.
+    if fleet_remote.fleet_ssh_available():
+        import re as _re
+        import json as _json
+        for m in fleet_remote.all_machines_including_local():
+            if m.get("is_local") or m.get("synthetic") or _is_offline(m["name"]):
+                continue
+            try:
+                # Try --json first; fall back to markdown if the peer's CLI
+                # is older (no --json flag).
+                r = fleet_remote.exec_remote(
+                    m["name"],
+                    f"~/.local/bin/harness arsenal get {slug} --json 2>/dev/null || "
+                    f"~/.local/bin/harness arsenal get {slug}",
+                    timeout=8,
+                )
+                if not (r.get("ok") and r.get("stdout")):
+                    continue
+                s = _re.sub(r"\x1b\[[0-9;]*m", "", r["stdout"])
+                s = _re.sub(r"\A\[[^\]\n]+\]\s*\n?", "", s)
+                # JSON path
+                jstart = s.find("{")
+                jend = s.rfind("}") + 1
+                if jstart == 0 and jend > jstart:
+                    try:
+                        remote_item = _json.loads(s[jstart:jend])
+                        if remote_item.get("error") != "not_found":
+                            return {**remote_item, "machine": m["name"]}
+                    except _json.JSONDecodeError:
+                        pass
+                # Markdown fallback:
+                #   # Title
+                #   _trust: X · produced_by: Y_
+                #
+                #   <content...>
+                if "(not found)" in s:
+                    continue
+                lines = s.splitlines()
+                if not lines or not lines[0].startswith("# "):
+                    continue
+                title = lines[0][2:].strip()
+                meta_match = _re.search(r"_trust:\s*(\S+)\s*·\s*produced_by:\s*(\S+)_", s)
+                trust_val = meta_match.group(1) if meta_match else "agent_summary"
+                produced_by = meta_match.group(2) if meta_match else "unknown"
+                # content = everything after first blank line past the meta line
+                body_start = 2
+                for i, ln in enumerate(lines[1:], 1):
+                    if meta_match and meta_match.group(0) in ln:
+                        body_start = i + 1
+                        break
+                content_txt = "\n".join(lines[body_start:]).strip()
+                return {
+                    "slug": slug, "title": title, "trust": trust_val,
+                    "produced_by": produced_by, "content": content_txt,
+                    "tags": "", "source_refs": "", "machine": m["name"],
+                }
+            except Exception:
+                _mark_offline(m["name"])
+                continue
+    return JSONResponse({"error": "not_found"}, status_code=404)
 
 
 @app.post("/api/arsenal/{slug}/trust")

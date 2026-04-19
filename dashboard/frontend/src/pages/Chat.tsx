@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { MessageSquare, Send, Settings2 } from "lucide-react";
 import { useParams } from "@/lib/router";
 import { chatApi } from "@/api/chat";
@@ -188,7 +190,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       )}
       <div
         className={cn(
-          "rounded-lg border px-3 py-2 text-sm whitespace-pre-wrap break-words",
+          "rounded-lg border px-3 py-2 text-sm break-words",
           isOutbound
             ? "bg-primary/10 border-primary/20 text-foreground"
             : "bg-card border-border text-foreground",
@@ -197,7 +199,9 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         {message.subject && (
           <div className="italic text-xs text-muted-foreground mb-1">{message.subject}</div>
         )}
-        <div>{message.body ?? ""}</div>
+        <div className="prose prose-sm prose-invert max-w-none prose-p:my-1.5 prose-headings:mt-3 prose-headings:mb-1.5 prose-pre:my-2 prose-pre:bg-muted prose-pre:text-xs prose-code:text-[0.85em] prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0 prose-a:text-primary">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.body ?? ""}</ReactMarkdown>
+        </div>
       </div>
       <div className="text-[10px] text-muted-foreground">
         {isOutbound && message.to && <span className="font-mono">→ {message.to} · </span>}
