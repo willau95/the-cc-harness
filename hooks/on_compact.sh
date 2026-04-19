@@ -12,6 +12,9 @@ set -eo pipefail
 AGENT_FOLDER="${1:-$PWD}"
 cd "$AGENT_FOLDER"
 
+# Claude Code may invoke hooks with a trimmed PATH. Prepend common harness install locations.
+export PATH="$HOME/.local/bin:$HOME/.local/pipx/venvs/claude-harness/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 # Drain stdin
 cat > /dev/null || true
 
