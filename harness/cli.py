@@ -34,6 +34,43 @@ from ._util import slugify
 REPO_ROOT = Path(__file__).resolve().parent.parent  # the-cc-harness repo root
 
 
+def _rewrite_tool_scripts(skill_dirs: list) -> None:
+    """Make copied skill tool .py files executable + shebang them at sys.executable.
+
+    Why: skill tools do `from harness import ...` but the system python3 doesn't
+    have our package (it's isolated in a pipx/uv venv). sys.executable (the
+    Python running `harness` right now) does have it. So we point each tool's
+    shebang at that interpreter at copy-time.
+
+    Also strips obsolete `sys.path.insert(0, ...parents[N]...)` lines from tool
+    scripts — they made wrong assumptions about layout and fail silently when
+    the package isn't where they guessed.
+    """
+    import re
+    python_exe = sys.executable
+    pattern = re.compile(r'^sys\.path\.insert\(\s*0\s*,\s*str\(Path\(__file__\)\.resolve\(\)\.parents\[\d+\]\)\s*\)\s*\n',
+                         re.MULTILINE)
+    for d in skill_dirs:
+        if not d or not d.exists():
+            continue
+        for py in d.rglob("*.py"):
+            try:
+                text = py.read_text()
+            except Exception:
+                continue
+            lines = text.splitlines(keepends=True)
+            if lines and lines[0].startswith("#!"):
+                lines[0] = f"#!{python_exe}\n"
+                text = "".join(lines)
+            # Remove the obsolete sys.path.insert line
+            text = pattern.sub("", text)
+            py.write_text(text)
+            try:
+                py.chmod(0o755)
+            except Exception:
+                pass
+
+
 @click.group()
 def cli():
     """Claude Harness — fleet layer on top of Claude Code."""
@@ -136,6 +173,13 @@ def init(role, name, project_name):
         if role_skill_dst.exists():
             shutil.rmtree(role_skill_dst)
         shutil.copytree(role_skill_src, role_skill_dst)
+
+    # Fix tool scripts: point shebang at THIS Python (the one running harness),
+    # which has the harness package importable. Strip obsolete sys.path.insert
+    # lines that assumed a specific source-tree layout. Make scripts executable.
+    # This is the right moment because sys.executable right now = the interpreter
+    # that actually has `harness` on its path.
+    _rewrite_tool_scripts([skill_dst, conv_dst, role_skill_dst])
 
     # Write settings.local.json — Claude Code's matchers schema
     # Events: SessionStart + PreCompact (PascalCase, no 'on' prefix).

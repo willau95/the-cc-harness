@@ -20,8 +20,21 @@ beyond Claude Code's built-in tools:
 
 ## Invocation
 
-All tools are Python scripts in `./.claude/skills/harness/tools/`. Claude Code will
-invoke them via Bash when you choose them. They return JSON on stdout.
+All tools are executable Python scripts under `.claude/skills/harness/tools/`.
+Invoke them DIRECTLY via the Bash tool — do NOT prefix with `bash` or `python3`.
+
+Correct (uses the shebang + the right Python with harness package importable):
+```
+.claude/skills/harness/tools/checkpoint_update.py --create --original-goal "..."
+```
+
+Wrong (ignores the shebang or uses a Python without harness installed):
+```
+bash .claude/skills/harness/tools/checkpoint_update.py ...
+python3 .claude/skills/harness/tools/checkpoint_update.py ...
+```
+
+Tools return JSON on stdout. Every tool supports `--help`.
 
 ## Default behavior
 
