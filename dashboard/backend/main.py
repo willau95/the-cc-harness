@@ -165,12 +165,20 @@ def api_arsenal_list(trust: str | None = None, limit: int = 100) -> dict:
                     timeout=10,
                 )
                 if r.get("ok") and r.get("stdout"):
-                    import json as _json
-                    s = r["stdout"]
+                    import json as _json, re as _re
+                    # Strip ANSI escape codes that fleet-ssh prepends
+                    s = _re.sub(r"\x1b\[[0-9;]*m", "", r["stdout"])
+                    # Strip fleet-ssh's leading "[Name]" prefix on the FIRST line only
+                    # (do NOT blanket-strip because JSON tags field has `["url"]`)
+                    s = _re.sub(r"\A\[[^\]\n]+\]\s*\n?", "", s)
+                    # Find JSON array in the cleaned stream
                     jstart = s.find("[")
                     jend = s.rfind("]") + 1
                     if jstart >= 0 and jend > jstart:
-                        remote_items = _json.loads(s[jstart:jend])
+                        try:
+                            remote_items = _json.loads(s[jstart:jend])
+                        except _json.JSONDecodeError:
+                            continue
                         for item in remote_items:
                             if trust and item.get("trust") != trust:
                                 continue
