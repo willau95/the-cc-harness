@@ -7,13 +7,15 @@ interface StatusIconProps {
   showLabel?: boolean;
 }
 
-function statusLabel(status: string): string {
+function statusLabel(status: string | undefined | null): string {
+  if (!status) return "Unknown";
   return status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 export function StatusIcon({ status, className, showLabel }: StatusIconProps) {
-  const colorClass = issueStatusIcon[status] ?? issueStatusIconDefault;
-  const isDone = status === "done";
+  const s = status ?? "unknown";
+  const colorClass = issueStatusIcon[s] ?? issueStatusIconDefault;
+  const isDone = s === "done";
 
   const circle = (
     <span

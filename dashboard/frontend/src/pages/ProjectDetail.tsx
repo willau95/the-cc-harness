@@ -52,10 +52,13 @@ export function ProjectDetailPage() {
           ) : (
             data.members.map((m) => (
               <div
-                key={m}
+                key={m.agent_id}
                 className="flex items-center gap-3 px-4 py-2 text-sm border-b border-border last:border-b-0"
               >
-                <span className="font-mono text-xs text-muted-foreground">{m}</span>
+                <span className="font-mono text-xs text-muted-foreground">{m.agent_id}</span>
+                {m.role && (
+                  <span className="text-xs text-muted-foreground">· {m.role}</span>
+                )}
               </div>
             ))
           )}

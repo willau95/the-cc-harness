@@ -23,7 +23,7 @@ export function ProjectCard({ project }: { project: ProjectSummary }) {
           {project.member_count} member{project.member_count === 1 ? "" : "s"}
         </span>
         <span className="truncate">
-          {project.members.slice(0, 3).join(", ")}
+          {project.members.slice(0, 3).map((m) => m.agent_id).join(", ")}
           {project.members.length > 3 ? ` +${project.members.length - 3}` : ""}
         </span>
       </div>

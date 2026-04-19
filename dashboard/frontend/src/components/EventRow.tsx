@@ -9,7 +9,8 @@ interface EventRowProps {
   className?: string;
 }
 
-function kindLabel(kind: string): string {
+function kindLabel(kind: string | undefined | null): string {
+  if (!kind) return "event";
   return kind.replace(/_/g, " ").replace(/\./g, " · ");
 }
 
@@ -46,7 +47,7 @@ export function EventRow({ event, className }: EventRowProps) {
           <div className="flex items-center gap-2 min-w-0">
             <Identity name={agent} size="xs" />
             <span className="text-xs text-muted-foreground font-mono shrink-0">
-              {kindLabel(event.kind)}
+              {kindLabel(event.type)}
             </span>
           </div>
           {summary && (

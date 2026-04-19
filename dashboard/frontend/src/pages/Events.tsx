@@ -41,7 +41,7 @@ export function EventsPage() {
     if (query.trim()) {
       const q = query.toLowerCase();
       events = events.filter((e) =>
-        [e.agent, e.kind, JSON.stringify(e)].some((v) => typeof v === "string" && v.toLowerCase().includes(q)),
+        [e.agent, e.type, JSON.stringify(e)].some((v) => typeof v === "string" && v.toLowerCase().includes(q)),
       );
     }
     return events;

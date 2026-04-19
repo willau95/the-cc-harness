@@ -129,7 +129,9 @@ def api_projects() -> dict:
 def api_project(proj: str) -> dict:
     state = project.read_state(proj)
     members = project.active_members(proj)
-    return {"project": proj, "state": state, "members": members}
+    # Flatten state to {key: value} so frontend shapes match /api/projects list.
+    # Raw meta is available via /api/projects/{proj}/state-meta if needed later.
+    return {"project": proj, "state": state.get("values", {}), "members": members}
 
 
 @app.get("/api/proposals")

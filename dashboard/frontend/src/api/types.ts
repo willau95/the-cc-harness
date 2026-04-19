@@ -19,7 +19,7 @@ export interface FleetResponse {
 export interface HarnessEvent {
   agent: string;
   ts: string;
-  kind: string;
+  type: string;
   [key: string]: unknown;
 }
 
@@ -52,11 +52,19 @@ export interface AgentDetail {
   inbox_pending: InboxItem[];
 }
 
+export interface ProjectMember {
+  agent_id: string;
+  role?: string;
+  ts?: string;
+  kind?: string;
+  [key: string]: unknown;
+}
+
 export interface ProjectSummary {
   project: string;
   state: Record<string, unknown>;
   member_count: number;
-  members: string[];
+  members: ProjectMember[];
 }
 
 export interface ProjectsResponse {
@@ -67,7 +75,7 @@ export interface ProjectsResponse {
 export interface ProjectDetailResponse {
   project: string;
   state: Record<string, unknown>;
-  members: string[];
+  members: ProjectMember[];
 }
 
 export interface Proposal {
