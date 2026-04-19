@@ -19,7 +19,23 @@ if str(REPO_ROOT) not in sys.path:
 
 from harness import config, registry, heartbeat, arsenal, mailbox, eventlog
 from harness import project, proposals, checkpoint, identity as ident_mod
+from harness import control as fleet_control
 from harness._util import read_jsonl
+
+# Pydantic for request bodies
+from pydantic import BaseModel
+
+
+class SpawnRequest(BaseModel):
+    role: str
+    name: str
+    folder: str
+    initial_prompt: str | None = None
+
+
+class BulkRequest(BaseModel):
+    action: str
+    agent_ids: list[str]
 
 app = FastAPI(title="Claude Harness Dashboard", version="0.1.0")
 
@@ -156,6 +172,74 @@ def api_stats() -> dict:
         "projects": len(projs),
         "trust_distribution": trust,
     }
+
+
+# ===== Fleet control (v1 soft controls) =====
+
+@app.post("/api/agents/{agent_id}/pause")
+def api_pause(agent_id: str) -> dict:
+    r = fleet_control.pause(agent_id)
+    if not r.get("ok"):
+        return JSONResponse(r, status_code=400)
+    return r
+
+
+@app.post("/api/agents/{agent_id}/resume")
+def api_resume(agent_id: str) -> dict:
+    r = fleet_control.resume(agent_id)
+    if not r.get("ok"):
+        return JSONResponse(r, status_code=400)
+    return r
+
+
+@app.post("/api/agents/{agent_id}/kill")
+def api_kill(agent_id: str) -> dict:
+    r = fleet_control.kill(agent_id)
+    if not r.get("ok"):
+        return JSONResponse(r, status_code=400)
+    return r
+
+
+@app.post("/api/fleet/spawn")
+def api_spawn(req: SpawnRequest) -> dict:
+    r = fleet_control.spawn(
+        role=req.role, name=req.name,
+        folder=req.folder, initial_prompt=req.initial_prompt,
+    )
+    if not r.get("ok"):
+        return JSONResponse(r, status_code=400)
+    return r
+
+
+@app.post("/api/fleet/bulk")
+def api_bulk(req: BulkRequest) -> dict:
+    r = fleet_control.bulk(req.action, req.agent_ids)
+    if not r.get("ok"):
+        return JSONResponse(r, status_code=400)
+    return r
+
+
+@app.get("/api/roles")
+def api_roles() -> dict:
+    """List available role templates so the dashboard spawn dialog can populate a select."""
+    roles_dir = Path(__file__).resolve().parents[2] / "roles"
+    if not roles_dir.exists():
+        return {"roles": []}
+    out = []
+    for f in sorted(roles_dir.glob("*.md")):
+        if f.name.startswith("_"):
+            continue
+        body = f.read_text()
+        desc = ""
+        if body.startswith("---"):
+            try:
+                import yaml
+                fm = yaml.safe_load(body.split("---", 2)[1])
+                desc = fm.get("description", "") if fm else ""
+            except Exception:
+                pass
+        out.append({"slug": f.stem, "description": desc})
+    return {"roles": out}
 
 
 # ===== WebSocket (file watcher) =====

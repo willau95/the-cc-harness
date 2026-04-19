@@ -1,4 +1,4 @@
-"""Shared helper for skill tools: locate agent, emit JSON, auto-heartbeat."""
+"""Shared helper for skill tools: locate agent, emit JSON, auto-heartbeat, respect pause."""
 from __future__ import annotations
 import json
 import sys
@@ -15,23 +15,30 @@ def find_project_root() -> Path:
 
 
 def _beat_current_agent() -> None:
-    """Best-effort heartbeat. Called automatically on every tool invocation.
-
-    Without this, agents get marked zombie 10 min after init even if they're
-    actively using Claude Code, because heartbeats otherwise fire only at
-    init and at SessionStart/PreCompact hooks.
-    """
+    """Best-effort heartbeat on every tool call."""
     try:
         from harness import identity, heartbeat  # type: ignore
         ident = identity.load_identity(find_project_root())
         if ident:
             heartbeat.beat(ident["agent_id"], via="tool_call")
     except Exception:
-        pass  # heartbeat is best-effort; never break the tool
+        pass
+
+
+def _check_pause() -> bool:
+    """Return True if the agent folder has a .harness/paused sentinel.
+    Dashboard writes this when human clicks Pause. Tools should short-circuit."""
+    try:
+        return (find_project_root() / ".harness" / "paused").exists()
+    except Exception:
+        return False
 
 
 def emit(obj: dict) -> None:
     _beat_current_agent()
+    if _check_pause() and obj.get("ok") is not False:
+        obj = {"ok": False, "paused": True,
+               "error": "agent is paused (human gate); resume via dashboard or remove .harness/paused"}
     json.dump(obj, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")
 

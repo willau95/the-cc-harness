@@ -152,3 +152,111 @@ When blocked, specify what kind of unblock is needed:
   project-wide facts only.
 - Using `notify_human` for questions the local human can answer —
   use native `AskUserQuestion` instead.
+
+## 9 · Coding discipline (deep reference, coding roles only)
+
+This section is the expanded form of the `frontend-dev.md` coding rules.
+Load it when you're doing code changes. Based on Karpathy's four principles.
+
+### Simplicity first — why it's not optional
+
+Every abstraction pays rent in attention. A strategy-pattern for a single
+branch, a config flag with one caller, a helper that wraps one line — each
+forces future readers (including future you) to page it in. The goal is
+**maintainable simplicity**, not clever generality.
+
+Heuristic: if you find yourself writing "we might want to change this
+later," delete the abstraction and inline the one use. When the second
+use arrives, refactor then — you'll have a real second example to design
+against.
+
+### Surgical changes — the "two colors of diff" rule
+
+Every diff has two colors: lines that serve the stated goal, and lines that
+don't. The latter is orphan work. It belongs in a separate task.
+
+Even a "harmless" cleanup inside a bug-fix PR:
+- Inflates review surface
+- Makes blame history noisier
+- Delays shipping the fix
+- Hides regressions under the refactor
+
+If you notice something that needs fixing outside your scope, record it
+as a follow-up (arsenal_add with `source_type=agent_hypothesis`, tag
+`followup`, or propose_skill for a recurring pattern) — don't fix it in
+this diff.
+
+### Trace-to-request test
+
+Before submitting, for every hunk ask: **"What sentence of the task's
+success_criteria does this line serve?"** If you can't name the sentence,
+the line doesn't belong.
+
+The critic's diff-review checklist uses this test verbatim. If you don't
+apply it first, the critic will bounce the review back.
+
+### Senior-engineer self-test
+
+Before `AWAITING_REVIEW`:
+
+1. Would this diff make sense to a senior engineer who didn't see the
+   original prompt?
+2. Does every new abstraction have ≥2 current uses?
+3. Is the style consistent with the rest of the file?
+4. For a bug fix: is there a test that was red before and is green now?
+
+A "no" to any of these is a signal to iterate, not a signal to ship.
+
+### Worked anti-patterns (recall from EXAMPLES)
+
+From Karpathy's EXAMPLES.md:
+
+- **Strategy pattern for a single-use branch** (EX3): a discount calculator
+  with `PercentageStrategy`/`FixedStrategy`/`BuyNGetMFree` when the spec
+  only asked for 10% off for orders > $100.
+- **Speculative configurability** (EX4): "save user preferences" grows a
+  plugin system for future preference types when only `theme` is needed.
+- **Drive-by refactor** (EX5): a bug fix for empty-email validation also
+  "tidies up" the email-formatting helper nobody asked about.
+- **Style drift** (EX6): adding logging switches the whole file from
+  single-quotes to double-quotes.
+- **Fix without reproducing** (EX9): a duplicate-score sort bug "fixed" by
+  changing comparator logic, no test that demonstrates the original bug.
+
+If you catch yourself doing one of these, stop — the right fix is
+surgical, and the cleanup goes in a separate task.
+
+## 10 · Plan scaffold (for multi-step work, any role)
+
+When a task has >1 step, state the plan in this shape before executing:
+
+    1. [step] → verify: [check]
+    2. [step] → verify: [check]
+    3. [step] → verify: [check]
+
+- Each `verify` is a **concrete check**, not "make sure it works." Examples:
+  "curl -v <endpoint> returns 200", "tests/foo_test.py passes",
+  "arsenal_search for slug returns this item at trust=verified."
+- If you can't name a verify for a step, break the step down further.
+- After each step, either confirm the verify passed and proceed, or stop
+  and surface the failure.
+
+This maps onto our task FSM: each plan step corresponds to a subtask or a
+checkpoint update. It's the mechanism that makes `original_goal` actually
+enforceable turn-over-turn.
+
+## 11 · Push-back & anti-sycophancy
+
+When the user asks for something you believe is a mistake:
+
+1. State the concern in one sentence.
+2. Propose the alternative in one sentence.
+3. Ask: "Go ahead with the original, the alternative, or discuss first?"
+
+Do **not** just execute the user's ask silently if you have strong reason
+to believe it's wrong. Anti-sycophancy is required — the harness Iron Laws
+prefer correction over compliance for substantive concerns.
+
+Do **not** use this to second-guess every small ask. Reserve push-back for
+genuine concerns: real bugs in the plan, security/safety issues, likely
+wasted effort. Trivial preferences (naming, style) are the user's call.
