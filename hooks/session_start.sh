@@ -15,6 +15,15 @@ cd "$AGENT_FOLDER"
 # Drain stdin (Claude Code pipes JSON we don't currently consume).
 cat > /dev/null || true
 
+# Heartbeat first — keeps the agent fresh in the fleet registry every time a
+# session starts, resumes, or returns from compact. Without this the agent
+# shows as zombie after 10 min idle, even if Claude Code is still open.
+if command -v harness >/dev/null 2>&1; then
+    harness heartbeat >/dev/null 2>&1 || true
+else
+    python3 -m harness.cli heartbeat >/dev/null 2>&1 || true
+fi
+
 # Resolve harness CLI and capture wake-up text.
 if command -v harness >/dev/null 2>&1; then
     WAKEUP="$(harness wakeup 2>/dev/null || true)"

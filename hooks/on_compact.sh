@@ -15,6 +15,13 @@ cd "$AGENT_FOLDER"
 # Drain stdin
 cat > /dev/null || true
 
+# Heartbeat: agent is actively compacting = alive.
+if command -v harness >/dev/null 2>&1; then
+    harness heartbeat >/dev/null 2>&1 || true
+else
+    python3 -m harness.cli heartbeat >/dev/null 2>&1 || true
+fi
+
 # Run digest. Swallow stderr to avoid disrupting compaction.
 if command -v harness >/dev/null 2>&1; then
     harness digest >/dev/null 2>&1 || true
