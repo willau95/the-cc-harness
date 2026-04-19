@@ -160,13 +160,22 @@ def bootstrap_peer_machine(machine: str) -> dict:
     me_name = config.machine_short()
     me_user = _os.environ.get("USER", "unknown")
     me_ip = "127.0.0.1"
-    try:
-        import subprocess as _sp
-        out = _sp.run(["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=3)
-        if out.returncode == 0 and out.stdout.strip():
-            me_ip = out.stdout.strip().splitlines()[0]
-    except Exception:
-        pass
+    # tailscale binary paths to try (macOS often only has the App bundle path)
+    TAILSCALE_BINS = [
+        "tailscale",
+        "/opt/homebrew/bin/tailscale",
+        "/usr/local/bin/tailscale",
+        "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+    ]
+    import subprocess as _sp
+    for bin_ in TAILSCALE_BINS:
+        try:
+            out = _sp.run([bin_, "ip", "-4"], capture_output=True, text=True, timeout=3)
+            if out.returncode == 0 and out.stdout.strip():
+                me_ip = out.stdout.strip().splitlines()[0]
+                break
+        except (FileNotFoundError, Exception):
+            continue
     master_entry = {"name": me_name, "user": me_user, "ip": me_ip}
     all_peers = [m for m in machines if m["name"].lower() != machine.lower()]
     all_peers.append(master_entry)
