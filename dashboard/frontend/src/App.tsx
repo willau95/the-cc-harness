@@ -10,6 +10,7 @@ import { ProposalsPage } from "@/pages/Proposals";
 import { ArsenalPage, ArsenalDetailPage } from "@/pages/Arsenal";
 import { TasksPage } from "@/pages/Tasks";
 import { ChatPage } from "@/pages/Chat";
+import { ChatIndexPage } from "@/pages/ChatIndex";
 import { NotFoundPage } from "@/pages/NotFound";
 
 export function App() {
@@ -30,6 +31,7 @@ export function App() {
         <Route path="/arsenal/:slug" element={<ArsenalDetailPage />} />
         <Route path="/tasks" element={<TasksPage />} />
         <Route path="/tasks/:tab" element={<TasksPage />} />
+        <Route path="/chat" element={<ChatIndexPage />} />
         <Route path="/chat/:agentId" element={<ChatPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>

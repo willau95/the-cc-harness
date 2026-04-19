@@ -14,7 +14,7 @@ DEFAULT_CONFIG = {
     "task_budget_default": 90,
     "memory_nudge_interval": 30,
     "skill_nudge_interval": 30,
-    "zombie_timeout_minutes": 10,
+    "zombie_timeout_minutes": 30,
     "notify_backend": "log",  # log | imessage | telegram (later)
 }
 

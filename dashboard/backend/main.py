@@ -149,8 +149,39 @@ def api_arsenal_list(trust: str | None = None, limit: int = 100) -> dict:
     items = [{
         "slug": r[0], "title": r[1], "trust": r[2], "produced_by": r[3],
         "produced_at": r[4], "source_refs": r[5], "tags": r[6],
-        "chain_depth": r[7],
+        "chain_depth": r[7], "machine": None,
     } for r in rows]
+
+    # v0.2: fold remote arsenals. Each peer has its own arsenal/index.sqlite;
+    # we query via `harness arsenal dump-json` (no brittle inline Python).
+    if fleet_remote.fleet_ssh_available():
+        for m in fleet_remote.all_machines_including_local():
+            if m.get("is_local") or m.get("synthetic"):
+                continue
+            try:
+                r = fleet_remote.exec_remote(
+                    m["name"],
+                    "~/.local/bin/harness arsenal dump-json --limit 200",
+                    timeout=10,
+                )
+                if r.get("ok") and r.get("stdout"):
+                    import json as _json
+                    s = r["stdout"]
+                    jstart = s.find("[")
+                    jend = s.rfind("]") + 1
+                    if jstart >= 0 and jend > jstart:
+                        remote_items = _json.loads(s[jstart:jend])
+                        for item in remote_items:
+                            if trust and item.get("trust") != trust:
+                                continue
+                            item["machine"] = m["name"]
+                            items.append(item)
+            except Exception:
+                continue
+
+    # Re-sort merged list by produced_at
+    items.sort(key=lambda i: i.get("produced_at") or "", reverse=True)
+    items = items[:limit]
     return {"count": len(items), "items": items,
             "trust_distribution": arsenal.trust_distribution()}
 

@@ -373,6 +373,26 @@ def arsenal_search(query, limit, include_unverified):
         click.echo(f"  [{r['trust']:16s}] {r['slug']:30s} — {r['title']}")
 
 
+@arsenal_cmd.command(name="dump-json")
+@click.option("--limit", default=200)
+def arsenal_dump_json(limit):
+    """Dump full arsenal as a JSON array on stdout. Used by remote aggregation."""
+    import sqlite3
+    conn = sqlite3.connect(config.arsenal_db_path())
+    try:
+        rows = conn.execute(
+            "SELECT slug, title, trust, produced_by, produced_at, source_refs, tags, chain_depth "
+            "FROM items ORDER BY produced_at DESC LIMIT ?", (limit,),
+        ).fetchall()
+    finally:
+        conn.close()
+    out = [{
+        "slug": r[0], "title": r[1], "trust": r[2], "produced_by": r[3],
+        "produced_at": r[4], "source_refs": r[5], "tags": r[6], "chain_depth": r[7],
+    } for r in rows]
+    click.echo(json.dumps(out, ensure_ascii=False))
+
+
 @arsenal_cmd.command(name="get")
 @click.argument("slug")
 def arsenal_get(slug):

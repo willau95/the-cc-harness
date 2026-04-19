@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   Library,
   ListChecks,
+  MessagesSquare,
   Search,
   Users,
 } from "lucide-react";
@@ -54,6 +55,7 @@ export function Sidebar() {
         <div className="flex flex-col gap-0.5">
           <SidebarNavItem to="/dashboard" label="Dashboard" icon={LayoutDashboard} />
           <SidebarNavItem to="/fleet" label="Fleet" icon={Users} liveCount={liveCount} />
+          <SidebarNavItem to="/chat" label="Chat" icon={MessagesSquare} />
           <SidebarNavItem to="/events" label="Events" icon={Activity} />
           <SidebarNavItem to="/arsenal" label="Arsenal" icon={Library} />
         </div>
