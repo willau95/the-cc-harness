@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
@@ -60,6 +62,70 @@ class ArsenalTrustRequest(BaseModel):
 app = FastAPI(title="Claude Harness Dashboard", version="0.1.0")
 
 FRONTEND_DIR = REPO_ROOT / "dashboard" / "frontend"
+
+# --- Remote aggregation helpers --------------------------------------------
+# Shared thread pool for parallel fleet-ssh calls (each call is ~1s of latency).
+_REMOTE_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="remote-agg")
+
+# Short-TTL cache for expensive cross-machine aggregations so rapid refreshes
+# (user clicking around) don't refire N fleet-ssh calls per second.
+_CACHE: dict[str, tuple[float, Any]] = {}
+_CACHE_TTL = 5.0  # seconds
+
+# Machines that recently failed — skipped for this TTL window.
+_OFFLINE: dict[str, float] = {}
+_OFFLINE_TTL = 15.0
+
+
+def _cache_get(key: str) -> Any | None:
+    entry = _CACHE.get(key)
+    if entry is None:
+        return None
+    ts, value = entry
+    if time.time() - ts > _CACHE_TTL:
+        _CACHE.pop(key, None)
+        return None
+    return value
+
+
+def _cache_put(key: str, value: Any) -> None:
+    _CACHE[key] = (time.time(), value)
+
+
+def _is_offline(machine: str) -> bool:
+    ts = _OFFLINE.get(machine)
+    if ts is None:
+        return False
+    if time.time() - ts > _OFFLINE_TTL:
+        _OFFLINE.pop(machine, None)
+        return False
+    return True
+
+
+def _mark_offline(machine: str) -> None:
+    _OFFLINE[machine] = time.time()
+
+
+def _parallel_remote(machines: list[dict], fn: Callable[[dict], Any]) -> list[Any]:
+    """Run fn(machine) in parallel across peers; collect non-None results.
+    Machines marked offline in the last _OFFLINE_TTL window are skipped.
+    """
+    targets = [m for m in machines
+               if not m.get("is_local") and not m.get("synthetic")
+               and not _is_offline(m["name"])]
+    if not targets:
+        return []
+    results: list[Any] = []
+    futures = {_REMOTE_POOL.submit(fn, m): m for m in targets}
+    for fut in as_completed(futures, timeout=15):
+        m = futures[fut]
+        try:
+            out = fut.result()
+            if out is not None:
+                results.append(out)
+        except Exception:
+            _mark_offline(m["name"])
+    return results
 
 
 # ===== REST =====
@@ -154,38 +220,47 @@ def api_arsenal_list(trust: str | None = None, limit: int = 100) -> dict:
 
     # v0.2: fold remote arsenals. Each peer has its own arsenal/index.sqlite;
     # we query via `harness arsenal dump-json` (no brittle inline Python).
+    # Parallelized + short-TTL cached to keep /arsenal page snappy.
     if fleet_remote.fleet_ssh_available():
-        for m in fleet_remote.all_machines_including_local():
-            if m.get("is_local") or m.get("synthetic"):
-                continue
-            try:
+        cache_key = f"arsenal-remote::{trust or ''}::{limit}"
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            items.extend(cached)
+        else:
+            import re as _re
+            import json as _json
+
+            def _fetch(m: dict) -> list[dict] | None:
                 r = fleet_remote.exec_remote(
                     m["name"],
                     "~/.local/bin/harness arsenal dump-json --limit 200",
-                    timeout=10,
+                    timeout=8,
                 )
-                if r.get("ok") and r.get("stdout"):
-                    import json as _json, re as _re
-                    # Strip ANSI escape codes that fleet-ssh prepends
-                    s = _re.sub(r"\x1b\[[0-9;]*m", "", r["stdout"])
-                    # Strip fleet-ssh's leading "[Name]" prefix on the FIRST line only
-                    # (do NOT blanket-strip because JSON tags field has `["url"]`)
-                    s = _re.sub(r"\A\[[^\]\n]+\]\s*\n?", "", s)
-                    # Find JSON array in the cleaned stream
-                    jstart = s.find("[")
-                    jend = s.rfind("]") + 1
-                    if jstart >= 0 and jend > jstart:
-                        try:
-                            remote_items = _json.loads(s[jstart:jend])
-                        except _json.JSONDecodeError:
-                            continue
-                        for item in remote_items:
-                            if trust and item.get("trust") != trust:
-                                continue
-                            item["machine"] = m["name"]
-                            items.append(item)
-            except Exception:
-                continue
+                if not (r.get("ok") and r.get("stdout")):
+                    return None
+                s = _re.sub(r"\x1b\[[0-9;]*m", "", r["stdout"])
+                s = _re.sub(r"\A\[[^\]\n]+\]\s*\n?", "", s)
+                jstart = s.find("[")
+                jend = s.rfind("]") + 1
+                if jstart < 0 or jend <= jstart:
+                    return None
+                try:
+                    remote_items = _json.loads(s[jstart:jend])
+                except _json.JSONDecodeError:
+                    return None
+                out = []
+                for item in remote_items:
+                    if trust and item.get("trust") != trust:
+                        continue
+                    item["machine"] = m["name"]
+                    out.append(item)
+                return out
+
+            merged: list[dict] = []
+            for chunk in _parallel_remote(fleet_remote.all_machines_including_local(), _fetch):
+                merged.extend(chunk)
+            _cache_put(cache_key, merged)
+            items.extend(merged)
 
     # Re-sort merged list by produced_at
     items.sort(key=lambda i: i.get("produced_at") or "", reverse=True)
@@ -347,14 +422,20 @@ def api_fleet_all() -> dict:
     remote_all: list[dict] = []
     errors: list[dict] = []
     if fleet_remote.fleet_ssh_available():
-        for m in fleet_remote.all_machines_including_local():
-            if m.get("is_local") or m.get("synthetic"):
-                continue
-            try:
-                peers = fleet_remote.list_remote_fleet(m["name"])
-                remote_all.extend(peers)
-            except Exception as e:
-                errors.append({"machine": m["name"], "error": str(e)})
+        cached = _cache_get("fleet-all-remote")
+        if cached is not None:
+            remote_all = cached
+        else:
+            def _fetch_peers(m: dict) -> list[dict] | None:
+                try:
+                    return fleet_remote.list_remote_fleet(m["name"])
+                except Exception as e:
+                    errors.append({"machine": m["name"], "error": str(e)})
+                    raise
+
+            for chunk in _parallel_remote(fleet_remote.all_machines_including_local(), _fetch_peers):
+                remote_all.extend(chunk)
+            _cache_put("fleet-all-remote", remote_all)
     return {
         "local": local_enriched,
         "remote": remote_all,
