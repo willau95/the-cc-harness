@@ -83,9 +83,17 @@ def init(role, name, project_name):
         click.echo("  Run `harness roles list` to see available roles.", err=True)
         sys.exit(1)
 
-    # Create identity
+    # Identity: idempotent — if this folder already has an agent with same slug,
+    # keep the existing agent_id. Only generate a fresh one if slug/role differ.
     slug = slugify(name)
-    ident = identity.create_identity(folder, role=role, slug=slug)
+    existing = identity.load_identity(folder)
+    if existing and existing.get("slug") == slug:
+        ident = dict(existing)
+        ident["role"] = role  # allow role upgrade
+        identity.write_identity(folder, ident)
+        click.echo(f"  (reusing existing agent_id {ident['agent_id']})")
+    else:
+        ident = identity.create_identity(folder, role=role, slug=slug)
     registry.register(ident)
 
     # Assemble CLAUDE.md: role template + hint pointer
