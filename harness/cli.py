@@ -129,37 +129,61 @@ def init(role, name, project_name):
             shutil.rmtree(role_skill_dst)
         shutil.copytree(role_skill_src, role_skill_dst)
 
-    # Write settings.local.json (hooks + permission allowances for ~/.harness/)
+    # Write settings.local.json — Claude Code's matchers schema
+    # Events: SessionStart + PreCompact (PascalCase, no 'on' prefix).
+    # Structure: event → array of matcher entries → each with hooks array of {type, command}
     settings_dir = folder / ".claude"
     settings_dir.mkdir(parents=True, exist_ok=True)
     settings_path = settings_dir / "settings.local.json"
     hook_root = REPO_ROOT / "hooks"
-    settings = {
-        "hooks": {
-            "onCompact": f"bash {hook_root / 'on_compact.sh'} {folder}",
-            "onSessionStart": f"bash {hook_root / 'session_start.sh'} {folder}",
-        },
-        "permissions": {
-            "allow": [
-                f"Bash(python -m harness.*:*)",
-                f"Read({config.HARNESS_ROOT}/**)",
-                f"Write({config.HARNESS_ROOT}/**)",
-                f"Edit({config.HARNESS_ROOT}/**)",
-            ],
-        },
+
+    our_hooks = {
+        "SessionStart": [{
+            "matcher": "",
+            "hooks": [{
+                "type": "command",
+                "command": f"bash {hook_root / 'session_start.sh'} {folder}",
+            }],
+        }],
+        "PreCompact": [{
+            "matcher": "",
+            "hooks": [{
+                "type": "command",
+                "command": f"bash {hook_root / 'on_compact.sh'} {folder}",
+            }],
+        }],
     }
+    our_allows = [
+        "Bash(python -m harness.*:*)",
+        "Bash(harness *:*)",
+        f"Read({config.HARNESS_ROOT}/**)",
+        f"Write({config.HARNESS_ROOT}/**)",
+        f"Edit({config.HARNESS_ROOT}/**)",
+    ]
+
+    settings: dict = {"hooks": our_hooks,
+                      "permissions": {"allow": our_allows}}
+
     if settings_path.exists():
-        # Merge rather than overwrite
         try:
             existing = json.loads(settings_path.read_text())
-            existing.setdefault("hooks", {}).update(settings["hooks"])
-            existing.setdefault("permissions", {}).setdefault("allow", [])
-            for rule in settings["permissions"]["allow"]:
-                if rule not in existing["permissions"]["allow"]:
-                    existing["permissions"]["allow"].append(rule)
+            # Merge hooks: our event → replace (avoid stale schema), other events preserved
+            existing_hooks = existing.get("hooks") or {}
+            # If existing uses obsolete onFoo keys, drop them — they're invalid under current schema
+            for obsolete in ("onCompact", "onSessionStart"):
+                existing_hooks.pop(obsolete, None)
+            for event, entries in our_hooks.items():
+                existing_hooks[event] = entries
+            existing["hooks"] = existing_hooks
+            # Merge permissions.allow (union)
+            perms = existing.setdefault("permissions", {})
+            allow = perms.setdefault("allow", [])
+            for rule in our_allows:
+                if rule not in allow:
+                    allow.append(rule)
             settings = existing
         except Exception:
-            pass  # overwrite if corrupt
+            pass  # corrupt → overwrite with fresh
     settings_path.write_text(json.dumps(settings, indent=2))
 
     # Empty checkpoint

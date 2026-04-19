@@ -1,17 +1,35 @@
 #!/usr/bin/env bash
-# SessionStart hook — runs when Claude Code starts a new session in this folder.
-# Emits a Markdown wake-up pack on stdout. Claude Code injects hook stdout as
-# an initial user message (behavior depends on Claude Code version; adjust as needed).
+# SessionStart hook — fires at new session / resume / clear / post-compact return.
 #
-# Installed by `harness init` in ./.claude/settings.local.json.
-# First arg = agent folder.
+# Input:  JSON on stdin (hook_event_name, session_id, transcript_path, cwd, source, ...)
+# Output: JSON on stdout of shape
+#   {"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"<wake-up md>"}}
+# Claude Code appends `additionalContext` into the agent's context.
+#
+# First arg = agent folder (passed by settings.local.json hook command line).
 
-set -euo pipefail
+set -eo pipefail
 AGENT_FOLDER="${1:-$PWD}"
 cd "$AGENT_FOLDER"
 
+# Drain stdin (Claude Code pipes JSON we don't currently consume).
+cat > /dev/null || true
+
+# Resolve harness CLI and capture wake-up text.
 if command -v harness >/dev/null 2>&1; then
-    harness wakeup
+    WAKEUP="$(harness wakeup 2>/dev/null || true)"
 else
-    python3 -m harness.cli wakeup
+    WAKEUP="$(python3 -m harness.cli wakeup 2>/dev/null || true)"
 fi
+
+# JSON-encode the wake-up string via python (safe across any content).
+WAKEUP_TEXT="$WAKEUP" python3 <<'PYEOF'
+import json, os, sys
+payload = {
+    "hookSpecificOutput": {
+        "hookEventName": "SessionStart",
+        "additionalContext": os.environ.get("WAKEUP_TEXT", ""),
+    }
+}
+sys.stdout.write(json.dumps(payload))
+PYEOF
