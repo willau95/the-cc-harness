@@ -431,3 +431,27 @@ def equip_many(slugs: list[str], agent_folder: Path | str) -> list[dict]:
         except Exception as e:
             results.append({"ok": False, "slug": s, "error": str(e)})
     return results
+
+
+def set_trust(slug: str, new_trust: str, by: str = "human@dashboard") -> dict:
+    """Update trust tier (experimental / analyst_reviewed / human_verified /
+    retracted). Writes to both the meta.yaml AND the sqlite index so search +
+    dashboard both reflect the change."""
+    if new_trust not in VALID_TRUST:
+        raise ValueError(f"trust must be one of {sorted(VALID_TRUST)}")
+    d = item_dir(slug)
+    meta_path = d / "meta.yaml"
+    if not meta_path.exists():
+        raise ValueError(f"equipment {slug!r} not found")
+    meta = yaml.safe_load(meta_path.read_text()) or {}
+    meta["trust"] = new_trust
+    meta["trust_updated_at"] = now_iso()
+    meta["trust_updated_by"] = by
+    atomic_write_text(meta_path, yaml.safe_dump(meta, sort_keys=False))
+    with _conn() as c:
+        c.execute(
+            "UPDATE items SET trust=?, updated_at=? WHERE slug=?",
+            (new_trust, meta["trust_updated_at"], slug),
+        )
+        c.commit()
+    return {"ok": True, "slug": slug, "trust": new_trust}

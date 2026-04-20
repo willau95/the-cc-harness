@@ -548,6 +548,22 @@ def equipment_equip(slugs, folder):
             click.echo(f"  ✗ {r['slug']}: {r.get('error')}", err=True)
 
 
+@equipment_cmd.command(name="set-trust")
+@click.argument("slug")
+@click.argument("new_trust",
+                type=click.Choice(sorted(equipment.VALID_TRUST)))
+@click.option("--by", default="human@cli")
+def equipment_set_trust(slug, new_trust, by):
+    """Update trust tier. Used by dashboard for cross-machine trust routing."""
+    import json as _json
+    try:
+        r = equipment.set_trust(slug, new_trust, by=by)
+        click.echo(_json.dumps(r))
+    except ValueError as e:
+        click.echo(_json.dumps({"ok": False, "error": str(e)}))
+        sys.exit(1)
+
+
 @cli.group(name="events")
 def events_cmd():
     """Event log inspection."""

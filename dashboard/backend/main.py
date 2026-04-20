@@ -1088,6 +1088,19 @@ def api_equipment_search(query: str) -> dict:
     return {"count": len(items), "items": items}
 
 
+class EquipmentTrustRequest(BaseModel):
+    trust: str
+
+
+@app.post("/api/equipment/{slug}/trust")
+def api_equipment_set_trust(slug: str, req: EquipmentTrustRequest) -> dict:
+    try:
+        r = equipment.set_trust(slug, req.trust, by="human@dashboard")
+        return r
+    except ValueError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+
 @app.get("/api/machines")
 def api_machines() -> dict:
     """List machines known in the fleet, enriched with reachability +

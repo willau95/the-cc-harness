@@ -369,6 +369,8 @@ function AddEquipmentDialog({ open, onOpenChange }: { open: boolean; onOpenChang
 export function EquipmentDetailPage() {
   const { slug = "" } = useParams<{ slug: string }>();
   const navigate = useNavigate();
+  const qc = useQueryClient();
+  const { pushToast } = useToast();
   const { setBreadcrumbs } = useBreadcrumbs();
   useEffect(() => {
     setBreadcrumbs([{ label: "Equipment", href: "/equipment" }, { label: slug }]);
@@ -378,6 +380,18 @@ export function EquipmentDetailPage() {
     queryKey: queryKeys.equipment_detail(slug),
     queryFn: () => equipmentApi.get(slug),
     enabled: !!slug,
+  });
+
+  const setTrust = useMutation({
+    mutationFn: (trust: string) => equipmentApi.setTrust(slug, trust),
+    onSuccess: (_res, trust) => {
+      qc.invalidateQueries({ queryKey: queryKeys.equipment });
+      qc.invalidateQueries({ queryKey: queryKeys.equipment_detail(slug) });
+      pushToast(`Trust → ${trust.replace(/_/g, " ")}`, "success");
+    },
+    onError: (err: unknown) => {
+      pushToast(err instanceof ApiError ? err.message : "Trust update failed", "error");
+    },
   });
 
   if (isLoading && !data) return <PageSkeleton />;
@@ -423,6 +437,36 @@ export function EquipmentDetailPage() {
             {data.description && (
               <p className="text-sm text-muted-foreground">{data.description}</p>
             )}
+            <div className="pt-2 border-t border-border/60 space-y-2">
+              <p className="text-xs text-muted-foreground">
+                {data.trust === "human_verified" && "You approved this. Agents can equip with high confidence."}
+                {data.trust === "analyst_reviewed" && "A manager agent analyzed and wrote the report. Not yet your approval."}
+                {data.trust === "experimental" && "Just added — not reviewed. Verify if the analysis looks right to you."}
+                {data.trust === "retracted" && "Retracted. Agents will skip this at equip time."}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => setTrust.mutate("human_verified")}
+                  disabled={setTrust.isPending || data.trust === "human_verified"}
+                >
+                  <CircleCheck className="h-4 w-4" />
+                  {data.trust === "human_verified" ? "Verified ✓" : "Mark verified"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => setTrust.mutate("retracted")}
+                  disabled={setTrust.isPending || data.trust === "retracted"}
+                >
+                  <CircleAlert className="h-4 w-4" />
+                  {data.trust === "retracted" ? "Retracted" : "Retract"}
+                </Button>
+                {setTrust.isPending && (
+                  <span className="text-xs text-muted-foreground">Updating…</span>
+                )}
+              </div>
+            </div>
           </section>
 
           <section className="space-y-2">

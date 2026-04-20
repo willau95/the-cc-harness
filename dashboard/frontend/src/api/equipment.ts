@@ -49,4 +49,9 @@ export const equipmentApi = {
     api.get<EquipmentListResponse>(
       `/equipment/search/${encodeURIComponent(query)}`,
     ),
+  setTrust: (slug: string, trust: string) =>
+    api.post<{ ok: boolean; slug: string; trust: string; error?: string }>(
+      `/equipment/${encodeURIComponent(slug)}/trust`,
+      { trust },
+    ),
 };
