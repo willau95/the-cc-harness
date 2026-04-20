@@ -10,6 +10,7 @@ import { PageTabBar } from "@/components/PageTabBar";
 import { EmptyState } from "@/components/EmptyState";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { ProposalCard } from "@/components/ProposalCard";
+import { PageHelp } from "@/components/PageHelp";
 
 const TABS = [
   { value: "pending", label: "Pending" },
@@ -37,6 +38,17 @@ export function ProposalsPage() {
 
   return (
     <div className="space-y-4">
+      <PageHelp
+        storageKey="proposals"
+        title="Proposals — self-improvement queue (awaiting your approval)"
+        summary="Agents suggest changes to themselves or the harness; you're the last checkpoint."
+        bullets={[
+          <><b>Who creates them:</b> agents write a proposal when they discover a better way to do something (new skill, changed prompt, removed tool)</>,
+          <><b>Critic check:</b> another agent reviews first. Only <i>critic_approved</i> proposals appear in "Pending"</>,
+          <><b>Your role:</b> approve → the change is applied; reject → it's archived with reason</>,
+          <><b>No approval = no change.</b> The fleet cannot mutate itself without your signoff</>,
+        ]}
+      />
       <Tabs
         value={tab}
         onValueChange={(v) => {

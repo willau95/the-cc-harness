@@ -16,6 +16,7 @@ import { useToast } from "@/context/ToastContext";
 import { EmptyState } from "@/components/EmptyState";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { Identity } from "@/components/Identity";
+import { BackLink } from "@/components/BackLink";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -90,6 +91,9 @@ export function ChatPage() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)] min-h-0">
+      <div className="shrink-0">
+        <BackLink to="/chat" label="Chat list" />
+      </div>
       <header className="shrink-0 rounded-lg border border-border bg-card/60 p-4 mb-3">
         <div className="flex items-center gap-3 flex-wrap">
           <span className={cn("inline-block h-2 w-2 rounded-full", dotClass)} />

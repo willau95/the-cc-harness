@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { EventRow } from "@/components/EventRow";
 import { ProjectCard } from "@/components/ProjectCard";
 import { PageSkeleton } from "@/components/PageSkeleton";
+import { PageHelp } from "@/components/PageHelp";
 import { statsApi } from "@/api/stats";
 import { eventsApi } from "@/api/events";
 import { projectsApi } from "@/api/projects";
@@ -49,6 +50,17 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
+      <PageHelp
+        storageKey="dashboard"
+        title="Dashboard — single-glance fleet health"
+        summary="Everything that matters in one screen. Click any tile to drill in."
+        bullets={[
+          <><b>Agents online</b> → who's heartbeating right now vs. stale</>,
+          <><b>Stale agents</b> → haven't checked in within the timeout; may be crashed or sleeping</>,
+          <><b>Proposals pending</b> → self-improvement suggestions from agents waiting for your approval</>,
+          <><b>Projects</b> → active collaborations (group of agents sharing a goal)</>,
+        ]}
+      />
       <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
         <MetricCard
           icon={Users}

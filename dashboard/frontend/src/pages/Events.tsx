@@ -8,6 +8,7 @@ import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { EventRow } from "@/components/EventRow";
 import { EmptyState } from "@/components/EmptyState";
 import { PageSkeleton } from "@/components/PageSkeleton";
+import { PageHelp } from "@/components/PageHelp";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 
@@ -54,6 +55,16 @@ export function EventsPage() {
 
   return (
     <div className="space-y-4">
+      <PageHelp
+        storageKey="events"
+        title="Events — audit log of everything happening in the fleet"
+        summary="Every registration, message, pause, task change, digest write lands here."
+        bullets={[
+          <><b>Scope:</b> union across all agents & machines — local events + events broadcast by peers</>,
+          <><b>Filter</b> by agent in the dropdown, or free-text search by type/agent/payload</>,
+          <><b>Source of truth</b> for debugging "why did X happen" questions — this log is append-only JSONL under <code>~/.harness/events/</code></>,
+        ]}
+      />
       <div className="flex flex-wrap items-center gap-2">
         <Input
           value={query}

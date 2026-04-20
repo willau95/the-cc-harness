@@ -14,6 +14,7 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/EmptyState";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { StatusBadge } from "@/components/StatusBadge";
+import { PageHelp } from "@/components/PageHelp";
 import {
   Select,
   SelectContent,
@@ -111,6 +112,17 @@ export function TasksPage() {
 
   return (
     <div className="space-y-4">
+      <PageHelp
+        storageKey="tasks"
+        title="Tasks — active work across every agent"
+        summary="Each agent's checkpoint FSM: what they're doing, what's blocked, what's awaiting your review."
+        bullets={[
+          <><b>Lifecycle:</b> proposed → in-progress → blocked (needs input) or awaiting-review → verified → done</>,
+          <><b>Awaiting-review</b> is where you come in — the agent finished, a critic signed off, and it's ready for your OK</>,
+          <><b>Blocked</b> tasks have a <code>blocked_on</code> reason; respond via chat to unblock</>,
+          <><b>Source:</b> each task lives in the agent's local <code>.harness/checkpoint.jsonl</code> — append-only, so history is never lost</>,
+        ]}
+      />
       <Tabs value={tab} onValueChange={onChangeTab}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <PageTabBar items={TABS} value={tab} onValueChange={onChangeTab} />

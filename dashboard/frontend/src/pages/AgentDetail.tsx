@@ -14,6 +14,7 @@ import { PageSkeleton } from "@/components/PageSkeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { EventRow } from "@/components/EventRow";
 import { KillButton, PauseResumeButton } from "@/components/AgentActionButtons";
+import { BackLink } from "@/components/BackLink";
 import { Button } from "@/components/ui/button";
 import { timeAgo } from "@/lib/timeAgo";
 import { deriveAgentStatus } from "@/lib/status-colors";
@@ -69,8 +70,11 @@ export function AgentDetailPage() {
   if (isLoading && !data) return <PageSkeleton variant="detail" />;
   if (error || !data) {
     return (
-      <div className="border border-border rounded-lg">
-        <EmptyState icon={Users} message={`Agent not found: ${agentId}`} />
+      <div className="space-y-2">
+        <BackLink to="/fleet" label="Fleet" />
+        <div className="border border-border rounded-lg">
+          <EmptyState icon={Users} message={`Agent not found: ${agentId}`} />
+        </div>
       </div>
     );
   }
@@ -80,6 +84,7 @@ export function AgentDetailPage() {
 
   return (
     <div className="space-y-6">
+      <BackLink to="/fleet" label="Fleet" />
       <section className="rounded-lg border border-border bg-card/60 p-4 md:p-5 space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex-1 min-w-0 space-y-1">

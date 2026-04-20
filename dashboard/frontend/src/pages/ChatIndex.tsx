@@ -8,6 +8,7 @@ import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { EmptyState } from "@/components/EmptyState";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { Identity } from "@/components/Identity";
+import { PageHelp } from "@/components/PageHelp";
 import { timeAgo } from "@/lib/timeAgo";
 
 export function ChatIndexPage() {
@@ -25,6 +26,17 @@ export function ChatIndexPage() {
 
   return (
     <div className="space-y-4">
+      <PageHelp
+        storageKey="chat-index"
+        title="Chat — direct line to any agent"
+        summary="Pick an agent to open its inbox. Your messages land in the same mailbox agents use to talk to each other."
+        bullets={[
+          <><b>You as <code>human@dashboard</code></b> — messages appear in the agent's inbox and events</>,
+          <><b>Markdown is rendered</b> (bold, lists, links, code)</>,
+          <><b>Persistent:</b> the thread is stored in <code>~/.harness/mailbox/&lt;agent_id&gt;/inbox.jsonl</code> — both sides see history</>,
+          <><b>Cross-machine works:</b> sending to a peer agent routes over fleet-ssh to their inbox</>,
+        ]}
+      />
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
           Chat with agent

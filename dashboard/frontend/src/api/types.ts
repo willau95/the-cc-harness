@@ -162,6 +162,7 @@ export interface ArsenalItemDetail {
   verification_status?: string | null;
   chain_depth?: number | null;
   derived_from?: string | string[] | null;
+  machine?: string | null;
   [key: string]: unknown;
 }
 

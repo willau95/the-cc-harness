@@ -22,6 +22,8 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/EmptyState";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { TrustBadge } from "@/components/TrustBadge";
+import { PageHelp } from "@/components/PageHelp";
+import { BackLink } from "@/components/BackLink";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -138,6 +140,17 @@ export function ArsenalPage() {
 
   return (
     <div className="space-y-4">
+      <PageHelp
+        storageKey="arsenal"
+        title="Arsenal — shared knowledge base (武器库)"
+        summary="Every peer writes findings here; the best get promoted to human-verified."
+        bullets={[
+          <><b>Who writes to it:</b> agents call <code>arsenal_add</code> after researching something worth keeping</>,
+          <><b>Trust tiers:</b> agent-summary (default) → peer-verified (critic) → human-verified (you)</>,
+          <><b>Your job:</b> browse, Mark verified the ones that are actually correct, Retract the wrong ones</>,
+          <><b>Cross-machine:</b> items from all peers aggregate here; the owning machine is shown on each row</>,
+        ]}
+      />
       <Tabs value={tab} onValueChange={onChangeTab}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <PageTabBar items={TABS} value={tab} onValueChange={onChangeTab} />
@@ -508,18 +521,39 @@ export function ArsenalDetailPage() {
       ? parseSourceRefs(data.derived_from)
       : [];
 
+  const trustHint = (() => {
+    switch (data.trust) {
+      case "human_verified": return "You marked this verified. Agents cite it with high confidence.";
+      case "retracted":      return "Retracted. Agents will skip this item.";
+      case "peer_verified":  return "A critic agent cross-checked this. Promote to verified if you agree.";
+      case "agent_summary":  return "Raw agent output — not yet reviewed. Verify or retract to close the loop.";
+      case "hypothesis":     return "An unproven claim. Needs evidence before being trusted.";
+      default: return null;
+    }
+  })();
+
   return (
+    <div className="space-y-2">
+      <BackLink to="/arsenal" label="Arsenal" />
     <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
       <div className="space-y-4 min-w-0">
         <section className="rounded-lg border border-border bg-card/60 p-4 md:p-5 space-y-3">
           <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
             <Library className="h-3 w-3" />
             <span className="truncate">{data.slug}</span>
+            {data.machine && (
+              <span className="ml-auto text-[11px] px-1.5 py-0.5 rounded bg-muted/60 text-muted-foreground">
+                on {data.machine}
+              </span>
+            )}
           </div>
           <div className="flex items-start gap-3 flex-wrap">
             <h2 className="text-lg font-semibold flex-1 min-w-0 break-words">{data.title}</h2>
             <TrustBadge trust={data.trust} />
           </div>
+          {trustHint && (
+            <p className="text-xs text-muted-foreground">{trustHint}</p>
+          )}
           <div className="flex items-center gap-2">
             <Button
               size="sm"
@@ -527,7 +561,7 @@ export function ArsenalDetailPage() {
               disabled={setTrust.isPending || data.trust === "human_verified"}
             >
               <ShieldCheck className="h-4 w-4" />
-              Mark verified
+              {data.trust === "human_verified" ? "Verified ✓" : "Mark verified"}
             </Button>
             <Button
               variant="destructive"
@@ -536,8 +570,11 @@ export function ArsenalDetailPage() {
               disabled={setTrust.isPending || data.trust === "retracted"}
             >
               <XCircle className="h-4 w-4" />
-              Retract
+              {data.trust === "retracted" ? "Retracted" : "Retract"}
             </Button>
+            {setTrust.isPending && (
+              <span className="text-xs text-muted-foreground">Updating…</span>
+            )}
           </div>
         </section>
 
@@ -641,6 +678,7 @@ export function ArsenalDetailPage() {
           </section>
         )}
       </aside>
+    </div>
     </div>
   );
 }

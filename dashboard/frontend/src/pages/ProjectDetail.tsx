@@ -10,6 +10,7 @@ import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { EmptyState } from "@/components/EmptyState";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { StatusBadge } from "@/components/StatusBadge";
+import { BackLink } from "@/components/BackLink";
 
 export function ProjectDetailPage() {
   const { proj = "" } = useParams<{ proj: string }>();
@@ -42,14 +43,18 @@ export function ProjectDetailPage() {
   if (isLoading && !data) return <PageSkeleton variant="detail" />;
   if (error || !data) {
     return (
-      <div className="border border-border rounded-lg">
-        <EmptyState icon={FolderKanban} message={`Project not found: ${proj}`} />
+      <div className="space-y-2">
+        <BackLink to="/projects" label="Projects" />
+        <div className="border border-border rounded-lg">
+          <EmptyState icon={FolderKanban} message={`Project not found: ${proj}`} />
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
+      <BackLink to="/projects" label="Projects" />
       <section className="rounded-lg border border-border bg-card/60 p-4 md:p-5">
         <div className="text-xs text-muted-foreground font-mono flex items-center gap-2">
           <FolderKanban className="h-3 w-3" />
