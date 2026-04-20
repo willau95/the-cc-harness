@@ -277,9 +277,24 @@ function MachineCard({
           </div>
           <div className="text-muted-foreground">
             Every agent spawned on this peer will fail with <code>Invalid API key</code> or
-            <code>ConnectionRefused</code> until you run <code className="px-1 bg-muted/60 rounded">claude login</code> on it.
-            OAuth requires a browser, so it must be done physically / via Screen Sharing —
-            cannot be delegated from the dashboard.
+            <code>ConnectionRefused</code> until <code className="px-1 bg-muted/60 rounded">claude login</code>
+            is completed on that Mac. OAuth needs a browser → do it via Screen Sharing or physically.
+          </div>
+        </div>
+      )}
+      {!local && m.stale_claude_binary === true && (
+        <div className="text-xs rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 space-y-1.5">
+          <div className="flex items-start gap-1.5 text-amber-600 dark:text-amber-400 font-medium">
+            <ShieldAlert className="h-3 w-3 shrink-0 mt-0.5" />
+            <span>Old npm-global claude conflicting with new install</span>
+          </div>
+          <div className="text-muted-foreground">
+            <code>/usr/local/bin/claude</code> (old npm-install) differs from the newer
+            <code>~/.local/bin/claude</code>. <code>which claude</code> likely hits the old one,
+            which can't read the new Keychain credential → every login attempt appears to fail.
+            Remove the old one on that Mac:
+            <pre className="mt-1 text-[10px] bg-muted/60 p-1 rounded">sudo rm /usr/local/bin/claude
+npm uninstall -g @anthropic-ai/claude-code</pre>
           </div>
         </div>
       )}

@@ -786,10 +786,21 @@ def api_machines() -> dict:
             "echo BASE_URL_$(grep -h '^export ANTHROPIC_BASE_URL' "
             "  $HOME/.zshrc $HOME/.zprofile $HOME/.bashrc $HOME/.bash_profile "
             "  2>/dev/null | head -1 || echo clean); "
-            # Check claude is logged in — without credentials.json every spawned
-            # agent fails with 'Invalid API key' or 'ConnectionRefused'
-            "echo CLAUDE_LOGIN_$(test -f $HOME/.claude/credentials.json "
-            "  && echo yes || echo missing)",
+            # Check claude is logged in — v2.1.40+ stores credentials in
+            # macOS Keychain (security find-generic-password -s 'Claude Code-credentials')
+            # not ~/.claude/credentials.json. We probe by checking BOTH:
+            # file credentials OR a working keychain entry.
+            "echo CLAUDE_LOGIN_$((test -f $HOME/.claude/credentials.json "
+            "  || security find-generic-password -s 'Claude Code-credentials' "
+            "     >/dev/null 2>&1) && echo yes || echo missing); "
+            # Also check for the 'stale binary' case: if /usr/local/bin/claude
+            # exists AND differs from ~/.local/bin/claude target, warn —
+            # the npm-global v2.1.19 leftover interferes with v2.1.40+
+            # keychain logins (issue we actually hit in the wild).
+            "echo STALE_BINARY_$(test -f /usr/local/bin/claude "
+            "  && test -L $HOME/.local/bin/claude "
+            "  && ! test /usr/local/bin/claude -ef $(readlink -f $HOME/.local/bin/claude 2>/dev/null) "
+            "  && echo yes || echo no)",
             timeout=6,
         )
         latency_ms = int((time.time() - start) * 1000)
@@ -819,11 +830,16 @@ def api_machines() -> dict:
             elif line.startswith("CLAUDE_LOGIN_"):
                 payload = line[len("CLAUDE_LOGIN_"):]
                 claude_logged_in = (payload == "yes")
+            elif line.startswith("STALE_BINARY_"):
+                payload = line[len("STALE_BINARY_"):]
+                stale_binary = (payload == "yes")
+                # attach below
         return {"online": online, "latency_ms": latency_ms,
                 "harness_installed": harness_ok and online,
                 "harness_version": harness_version if harness_ok else None,
                 "anthropic_base_url_issue": base_url_issue,
-                "claude_logged_in": claude_logged_in}
+                "claude_logged_in": claude_logged_in,
+                "stale_claude_binary": locals().get("stale_binary", False)}
 
     enriched: list[dict] = []
     probes: dict[str, dict] = {}

@@ -224,6 +224,7 @@ export interface Machine {
   offline_reason?: string | null;
   anthropic_base_url_issue?: string | null;
   claude_logged_in?: boolean | null;
+  stale_claude_binary?: boolean;
   [key: string]: unknown;
 }
 
