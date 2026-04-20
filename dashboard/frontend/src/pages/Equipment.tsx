@@ -32,6 +32,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { EquipmentFileBrowser } from "@/components/EquipmentFileBrowser";
+import { Tabs } from "@/components/ui/tabs";
+import { PageTabBar } from "@/components/PageTabBar";
 import {
   Dialog,
   DialogContent,
@@ -469,14 +472,7 @@ export function EquipmentDetailPage() {
             </div>
           </section>
 
-          <section className="space-y-2">
-            <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-              武器说明书 · Analysis
-            </h3>
-            <div className="rounded-lg border border-border bg-card/60 p-4 prose prose-sm prose-invert max-w-none">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{data.analysis ?? "_(no analysis written yet)_"}</ReactMarkdown>
-            </div>
-          </section>
+          <DetailContentTabs slug={data.slug} analysis={data.analysis ?? ""} />
         </div>
 
         <aside className="space-y-4">
@@ -542,6 +538,27 @@ export function EquipmentDetailPage() {
         </aside>
       </div>
     </div>
+  );
+}
+
+function DetailContentTabs({ slug, analysis }: { slug: string; analysis: string }) {
+  const [tab, setTab] = useState<"files" | "analysis">("files");
+  const items = [
+    { value: "files", label: "Files" },
+    { value: "analysis", label: "武器说明书 · Analysis" },
+  ];
+  return (
+    <Tabs value={tab} onValueChange={(v) => setTab(v as "files" | "analysis")} className="space-y-3">
+      <PageTabBar items={items} value={tab} onValueChange={(v) => setTab(v as "files" | "analysis")} />
+      {tab === "files" && <EquipmentFileBrowser slug={slug} />}
+      {tab === "analysis" && (
+        <div className="rounded-lg border border-border bg-card/60 p-4 prose prose-sm prose-invert max-w-none">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {analysis || "_(no analysis written yet — placeholder. The equipment-manager agent will fill this in automatically.)_"}
+          </ReactMarkdown>
+        </div>
+      )}
+    </Tabs>
   );
 }
 

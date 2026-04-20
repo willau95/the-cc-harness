@@ -1088,6 +1088,104 @@ def api_equipment_search(query: str) -> dict:
     return {"count": len(items), "items": items}
 
 
+# Max size for file content streaming — skills rarely have files > this, but
+# some do (PDFs / long reference.md). Cap to prevent accidental OOM.
+MAX_EQUIPMENT_FILE_BYTES = 512 * 1024  # 512 KB
+
+# Extensions we'll render as text; everything else is returned as "binary"
+TEXT_EXTS = {
+    ".md", ".txt", ".py", ".js", ".ts", ".tsx", ".jsx", ".sh", ".bash",
+    ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".xml", ".html",
+    ".css", ".scss", ".sql", ".rs", ".go", ".java", ".rb", ".php", ".c",
+    ".cpp", ".h", ".hpp", ".swift", ".kt", ".r", ".lua", ".vim", ".zsh",
+    ".fish", ".env", ".gitignore", ".dockerfile", ".makefile",
+}
+
+
+def _is_text_file(path: Path) -> bool:
+    suffix = path.suffix.lower()
+    if suffix in TEXT_EXTS:
+        return True
+    # Files without extension, check if content looks like text
+    if not suffix and path.stat().st_size < 100_000:
+        try:
+            path.read_text()
+            return True
+        except UnicodeDecodeError:
+            return False
+    return False
+
+
+@app.get("/api/equipment/{slug}/tree")
+def api_equipment_tree(slug: str) -> dict:
+    """List every file under an equipment item's content/ dir as a flat
+    tree. Used by the dashboard detail page to show the full skill
+    structure — SKILL.md, references, scripts/, themes/, etc."""
+    meta = equipment.get(slug)
+    if not meta:
+        return JSONResponse({"error": "not_found"}, status_code=404)
+    content = Path(meta["path"]) / "content"
+    if not content.exists():
+        return {"slug": slug, "files": []}
+    root_str = str(content)
+    files: list[dict] = []
+    for f in sorted(content.rglob("*")):
+        if f.is_dir():
+            continue
+        # Skip anything inside .git/
+        if ".git" in f.parts:
+            continue
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        rel = str(f.relative_to(content))
+        files.append({
+            "path": rel,
+            "size": st.st_size,
+            "is_text": _is_text_file(f),
+            "ext": f.suffix.lower(),
+        })
+    return {"slug": slug, "content_root": root_str, "count": len(files),
+            "files": files}
+
+
+@app.get("/api/equipment/{slug}/file")
+def api_equipment_file(slug: str, path: str) -> dict:
+    """Return the content of one file inside an equipment item's content/
+    dir. Text files are returned inline; binary files return size + type
+    only. Hard-capped at MAX_EQUIPMENT_FILE_BYTES."""
+    meta = equipment.get(slug)
+    if not meta:
+        return JSONResponse({"error": "not_found"}, status_code=404)
+    content_root = (Path(meta["path"]) / "content").resolve()
+    # Guard against path-escape (e.g. '../../../etc/passwd')
+    full = (content_root / path).resolve()
+    try:
+        full.relative_to(content_root)
+    except ValueError:
+        return JSONResponse({"error": "path escapes equipment root"}, status_code=400)
+    if not full.exists() or not full.is_file():
+        return JSONResponse({"error": "file not found"}, status_code=404)
+    size = full.stat().st_size
+    if size > MAX_EQUIPMENT_FILE_BYTES:
+        return {
+            "path": path, "size": size, "truncated": True,
+            "reason": f"file larger than {MAX_EQUIPMENT_FILE_BYTES} bytes — open locally",
+            "content": None, "is_text": False,
+        }
+    if _is_text_file(full):
+        try:
+            text = full.read_text(errors="replace")
+            return {"path": path, "size": size, "is_text": True,
+                    "content": text, "ext": full.suffix.lower()}
+        except OSError as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+    return {"path": path, "size": size, "is_text": False,
+            "ext": full.suffix.lower(), "content": None,
+            "reason": "binary file — not rendered inline"}
+
+
 class EquipmentTrustRequest(BaseModel):
     trust: str
 

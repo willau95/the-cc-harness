@@ -54,4 +54,29 @@ export const equipmentApi = {
       `/equipment/${encodeURIComponent(slug)}/trust`,
       { trust },
     ),
+  tree: (slug: string) =>
+    api.get<{ slug: string; count: number; files: EquipmentFile[] }>(
+      `/equipment/${encodeURIComponent(slug)}/tree`,
+    ),
+  file: (slug: string, path: string) =>
+    api.get<EquipmentFileContent>(
+      `/equipment/${encodeURIComponent(slug)}/file?path=${encodeURIComponent(path)}`,
+    ),
 };
+
+export interface EquipmentFile {
+  path: string;
+  size: number;
+  is_text: boolean;
+  ext: string;
+}
+
+export interface EquipmentFileContent {
+  path: string;
+  size: number;
+  is_text: boolean;
+  content: string | null;
+  ext?: string;
+  reason?: string;
+  truncated?: boolean;
+}
