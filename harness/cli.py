@@ -314,6 +314,47 @@ def inbox(agent, limit):
         click.echo(f"- {m['msg_id']}  from {m['from']}  {m['subject']}")
 
 
+@cli.group(name="events")
+def events_cmd():
+    """Event log inspection."""
+
+
+@events_cmd.command(name="dump-json")
+@click.option("--limit", default=500, help="Max events to emit (most recent first).")
+@click.option("--days", default=1, help="How many days back to scan (including today).")
+def events_dump_json(limit, days):
+    """Emit today's events across every local agent as a JSON array.
+    Used by the dashboard to fold a peer's events into the aggregated view."""
+    from harness._util import today_str
+    import datetime as _dt
+    events_root = config.HARNESS_ROOT / "events"
+    if not events_root.exists():
+        click.echo("[]")
+        return
+    today = _dt.date.today()
+    out = []
+    for agent_dir in events_root.iterdir():
+        if not agent_dir.is_dir():
+            continue
+        for i in range(max(1, days)):
+            d = (today - _dt.timedelta(days=i)).isoformat()
+            f = agent_dir / f"{d}.jsonl"
+            if not f.exists():
+                continue
+            for line in f.read_text().splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                rec["agent"] = agent_dir.name
+                out.append(rec)
+    out.sort(key=lambda e: e.get("ts", ""), reverse=True)
+    click.echo(json.dumps(out[:limit], default=str, ensure_ascii=False))
+
+
 @cli.group()
 def roles():
     """Role templates."""

@@ -44,11 +44,16 @@ export function EventRow({ event, className }: EventRowProps) {
     >
       <div className="flex gap-3">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center gap-2 min-w-0 flex-wrap">
             <Identity name={agent} size="xs" />
             <span className="text-xs text-muted-foreground font-mono shrink-0">
               {kindLabel(event.type)}
             </span>
+            {typeof event.machine === "string" && event.machine && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted/60 text-muted-foreground font-mono shrink-0">
+                on {event.machine}
+              </span>
+            )}
           </div>
           {summary && (
             <p className="text-xs text-muted-foreground truncate mt-0.5">{summary}</p>

@@ -33,7 +33,58 @@ def create(kind: str, proposer: str, data: dict) -> dict:
     }
     atomic_write_text(_path(kind, pid), yaml.safe_dump(record, sort_keys=False))
     eventlog.log(proposer, "proposal_created", id=pid, kind=kind)
+    # Auto-route to a critic agent if one is alive. Non-fatal: if no critic
+    # exists yet, the proposal just sits in 'pending' until one is spawned
+    # (or a human runs `harness proposals critic-verdict` manually).
+    try:
+        _notify_critic(record)
+    except Exception as e:
+        eventlog.log(proposer, "proposal_critic_notify_failed", id=pid, error=str(e)[:200])
     return record
+
+
+def _find_critic_agent() -> str | None:
+    """Find a critic agent to notify. Priority:
+       1. config override: critic_agent_id
+       2. First live agent whose role == 'critic'
+       3. None (pending stays pending until a human/critic picks it up)"""
+    cfg = config.load_config()
+    override = cfg.get("critic_agent_id")
+    if override:
+        return override
+    from . import registry
+    for ag in registry.live_agents():
+        role = (ag.get("role") or "").lower()
+        if role == "critic":
+            return ag.get("agent_id")
+    return None
+
+
+def _notify_critic(record: dict) -> None:
+    """Push a review-request message to the critic agent's inbox."""
+    from . import mailbox
+    critic_id = _find_critic_agent()
+    if not critic_id:
+        return
+    pid = record["id"]
+    kind = record["kind"]
+    proposer = record["proposer"]
+    # Compact body: the critic agent reads inbox, calls set_critic_verdict tool
+    summary = yaml.safe_dump(record.get("data") or {}, sort_keys=False)
+    body = (
+        f"A {kind} proposal was filed by {proposer}. Please review and vote.\n\n"
+        f"Proposal ID: {pid}\n"
+        f"Kind: {kind}\n"
+        f"---\n{summary}\n\n"
+        f"When done, emit your verdict by running the harness skill tool "
+        f"`propose_verdict` (or CLI: `harness proposals critic-verdict {kind} {pid} approve|reject|needs_revision`)."
+    )
+    mailbox.send(
+        from_id="proposals@system",
+        to_id=critic_id,
+        subject=f"critic_review_request · {kind} · {pid}",
+        body=body,
+    )
 
 
 def load(kind: str, pid: str) -> dict | None:

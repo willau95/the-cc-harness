@@ -184,7 +184,7 @@ def api_agent(agent_id: str) -> dict:
 
 @app.get("/api/events")
 def api_events(limit: int = 200) -> dict:
-    """Merged events across all agents (today only for v1)."""
+    """Merged events across every agent on every peer (today only for v1)."""
     out: list[dict] = []
     events_root = config.HARNESS_ROOT / "events"
     if events_root.exists():
@@ -193,9 +193,55 @@ def api_events(limit: int = 200) -> dict:
         for agent_dir in events_root.iterdir():
             f = agent_dir / f"{today}.jsonl"
             for e in read_jsonl(f):
-                out.append({"agent": agent_dir.name, **e})
+                out.append({"agent": agent_dir.name, "machine": None, **e})
+
+    # Fold in peer events (5s TTL cached — aggressive because events stream fast)
+    if fleet_remote.fleet_ssh_available():
+        cache_key = f"events-remote::{limit}"
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            out.extend(cached)
+        else:
+            import re as _re
+            import json as _json
+
+            def _fetch(m: dict) -> list[dict] | None:
+                r = fleet_remote.exec_remote(
+                    m["name"],
+                    f"~/.local/bin/harness events dump-json --limit {limit}",
+                    timeout=8,
+                )
+                if not (r.get("ok") and r.get("stdout")):
+                    return None
+                s = _re.sub(r"\x1b\[[0-9;]*m", "", r["stdout"])
+                s = _re.sub(r"\A\[[^\]\n]+\]\s*\n?", "", s)
+                jstart = s.find("[")
+                jend = s.rfind("]") + 1
+                if jstart < 0 or jend <= jstart:
+                    return None
+                try:
+                    remote_events = _json.loads(s[jstart:jend])
+                except _json.JSONDecodeError:
+                    return None
+                return [{**e, "machine": m["name"]} for e in remote_events]
+
+            merged: list[dict] = []
+            for chunk in _parallel_remote(fleet_remote.all_machines_including_local(), _fetch):
+                merged.extend(chunk)
+            _cache_put(cache_key, merged)
+            out.extend(merged)
+
     out.sort(key=lambda e: e.get("ts", ""), reverse=True)
-    return {"count": len(out[:limit]), "events": out[:limit]}
+    # Dedupe in case broadcast registry causes duplicate events across peers
+    seen: set[tuple] = set()
+    deduped: list[dict] = []
+    for e in out:
+        k = (e.get("agent"), e.get("ts"), e.get("type"), (e.get("msg_id") or e.get("id") or ""))
+        if k in seen:
+            continue
+        seen.add(k)
+        deduped.append(e)
+    return {"count": len(deduped[:limit]), "events": deduped[:limit]}
 
 
 @app.get("/api/arsenal")
@@ -636,6 +682,50 @@ def api_machine_ping(machine: str) -> dict:
         _OFFLINE.pop(machine, None)
     return {"ok": ok, "machine": machine, "latency_ms": latency_ms,
             "stdout": r.get("stdout", "")[:200], "stderr": r.get("stderr", "")[:200]}
+
+
+@app.post("/api/machines/{machine}/install-harness")
+def api_machine_install_harness(machine: str) -> dict:
+    """Clone and install harness on a remote peer via fleet-ssh.
+    Idempotent: if already installed, updates to latest main.
+    Long-running — up to 5 minutes. Output captured for debugging."""
+    if not fleet_remote.fleet_ssh_available():
+        return JSONResponse({"ok": False, "error": "fleet-ssh not available"}, status_code=400)
+
+    # Probe first — if already installed, pull + reinstall; else fresh clone.
+    probe = fleet_remote.exec_remote(
+        machine,
+        "test -d $HOME/the-cc-harness/.git && echo UPDATE || echo CLONE",
+        timeout=8,
+    )
+    path_exists = "UPDATE" in (probe.get("stdout") or "")
+
+    if path_exists:
+        cmd = (
+            "cd $HOME/the-cc-harness && "
+            "git fetch origin main --quiet && "
+            "git reset --hard origin/main && "
+            "./install.sh 2>&1 | tail -40"
+        )
+    else:
+        cmd = (
+            "cd $HOME && "
+            "git clone --quiet https://github.com/willau95/the-cc-harness && "
+            "cd the-cc-harness && ./install.sh 2>&1 | tail -40"
+        )
+
+    r = fleet_remote.exec_remote(machine, cmd, timeout=300)  # up to 5 min
+    _CACHE.pop("machines-enriched", None)  # bust so UI picks up new harness state
+    ok = bool(r.get("ok"))
+    out = (r.get("stdout") or "")
+    err = (r.get("stderr") or "")[:1000]
+    return {
+        "ok": ok,
+        "action": "update" if path_exists else "clone",
+        "machine": machine,
+        "tail": out[-2000:],
+        "stderr": err,
+    }
 
 
 @app.post("/api/machines/{machine}/bootstrap")

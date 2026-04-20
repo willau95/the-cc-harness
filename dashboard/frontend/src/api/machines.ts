@@ -13,4 +13,9 @@ export const machinesApi = {
       `/machines/${encodeURIComponent(name)}/bootstrap`,
       {},
     ),
+  installHarness: (name: string) =>
+    api.post<{ ok: boolean; action: "update" | "clone"; machine: string; tail: string; stderr: string }>(
+      `/machines/${encodeURIComponent(name)}/install-harness`,
+      {},
+    ),
 };

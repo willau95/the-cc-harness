@@ -2,8 +2,10 @@ import { useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
+  Download,
   HardDrive,
   Link2,
+  Loader2,
   Network,
   Package,
   RefreshCw,
@@ -55,6 +57,25 @@ export function MachinesPage() {
       qc.invalidateQueries({ queryKey: queryKeys.machines });
       if (res.ok) pushToast(`${name}: peers.yaml updated (${res.peers_count} peers)`, "success");
       else pushToast(`${name}: bootstrap failed`, "error");
+    },
+  });
+
+  const install = useMutation({
+    mutationFn: (name: string) => machinesApi.installHarness(name),
+    onSuccess: (res, name) => {
+      qc.invalidateQueries({ queryKey: queryKeys.machines });
+      if (res.ok) {
+        pushToast(
+          `${name}: harness ${res.action === "update" ? "updated" : "installed"}`,
+          "success",
+        );
+      } else {
+        pushToast(`${name}: install failed — check ${res.stderr?.slice(0, 80) ?? "logs"}`, "error");
+      }
+    },
+    onError: (err: unknown, name) => {
+      const msg = err instanceof ApiError ? err.message : "Install failed";
+      pushToast(`${name}: ${msg}`, "error");
     },
   });
 
@@ -128,8 +149,10 @@ fleet-ssh add <peer-name> <peer-tailscale-ip> <peer-user>`}
               m={m}
               onPing={() => ping.mutate(m.name)}
               onBootstrap={() => bootstrap.mutate(m.name)}
+              onInstall={() => install.mutate(m.name)}
               pingBusy={ping.isPending && ping.variables === m.name}
               bootstrapBusy={bootstrap.isPending && bootstrap.variables === m.name}
+              installBusy={install.isPending && install.variables === m.name}
             />
           ))}
         </div>
@@ -153,13 +176,15 @@ fleet-ssh add <peer-name> <peer-tailscale-ip> <peer-user>`}
 }
 
 function MachineCard({
-  m, onPing, onBootstrap, pingBusy, bootstrapBusy,
+  m, onPing, onBootstrap, onInstall, pingBusy, bootstrapBusy, installBusy,
 }: {
   m: Machine;
   onPing: () => void;
   onBootstrap: () => void;
+  onInstall: () => void;
   pingBusy: boolean;
   bootstrapBusy: boolean;
+  installBusy: boolean;
 }) {
   const online = Boolean(m.online);
   const harnessOk = Boolean(m.harness_installed);
@@ -227,7 +252,7 @@ function MachineCard({
       {online && !harnessOk && !local && (
         <div className="text-xs text-muted-foreground rounded border border-border/60 bg-muted/20 px-2 py-1.5 flex items-start gap-1.5">
           <Package className="h-3 w-3 shrink-0 mt-0.5" />
-          <span>SSH works but harness is missing. Install: <code>git clone …/the-cc-harness && ./install.sh</code> on this peer.</span>
+          <span>SSH works but harness is missing. Click <b>Install</b> below to clone + run <code>./install.sh</code> over fleet-ssh.</span>
         </div>
       )}
 
@@ -236,6 +261,27 @@ function MachineCard({
           <Button size="sm" variant="outline" onClick={onPing} disabled={pingBusy}>
             <RefreshCw className={cn("h-3.5 w-3.5", pingBusy && "animate-spin")} />
             Test
+          </Button>
+        )}
+        {!local && online && !harnessOk && (
+          <Button size="sm" onClick={onInstall} disabled={installBusy}>
+            {installBusy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Download className="h-3.5 w-3.5" />
+            )}
+            {installBusy ? "Installing…" : "Install"}
+          </Button>
+        )}
+        {!local && online && harnessOk && (
+          <Button size="sm" variant="ghost" onClick={onInstall} disabled={installBusy}
+                  title="Pull latest main + re-run install.sh">
+            {installBusy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Download className="h-3.5 w-3.5" />
+            )}
+            {installBusy ? "Updating…" : "Update"}
           </Button>
         )}
         {!local && online && (
