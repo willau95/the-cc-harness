@@ -1244,8 +1244,24 @@ def api_fleet_all() -> dict:
 def api_chat_thread(agent_id: str, limit: int = 50) -> dict:
     """Return the conversation thread with this agent: inbox + outbox union,
     ordered by created_at ascending. Dashboard renders as a chat."""
-    # Inbox to this agent (messages TO it)
-    inbox_lines = list(read_jsonl(mailbox.inbox_path(agent_id)))
+    # Inbox to this agent (messages TO it). For agents living on a peer, the
+    # inbox file sits on that peer's disk — fetch it via fleet-ssh.
+    ag = registry.find(agent_id)
+    machine = (ag or {}).get("machine")
+    consumed: set[str] = set()
+    if ag and machine and not fleet_remote.is_local_machine(machine) and fleet_remote.fleet_ssh_available():
+        inbox_lines = fleet_remote.read_remote_jsonl(
+            machine, f"~/.harness/mailbox/{agent_id}/inbox.jsonl"
+        )
+        # Also pull the peer's consumed log so we know read/unread state
+        consumed_result = fleet_remote.read_remote_file(
+            machine, f"~/.harness/mailbox/{agent_id}/inbox.consumed"
+        )
+        if consumed_result.get("ok") and consumed_result.get("content"):
+            consumed = {line.strip() for line in consumed_result["content"].splitlines() if line.strip()}
+    else:
+        inbox_lines = list(read_jsonl(mailbox.inbox_path(agent_id)))
+        consumed = mailbox._load_consumed(agent_id)
     # Outbox from this agent — reconstruct by reading other agents' inboxes
     # where this agent is the sender. For v1 we approximate via events.
     events = eventlog.for_agent_today(agent_id)
@@ -1263,8 +1279,7 @@ def api_chat_thread(agent_id: str, limit: int = 50) -> dict:
             })
     # read/unread state: "consumed" msg_ids were seen by the agent (via
     # receive_messages tool call or inbox_peek surfacing). Everything else is
-    # still unread.
-    consumed = mailbox._load_consumed(agent_id)
+    # still unread. 'consumed' is already populated above (local or remote).
     inbound = [
         {**m, "direction": "inbound",
          "read": m.get("msg_id") in consumed}
