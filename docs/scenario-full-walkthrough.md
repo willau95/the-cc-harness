@@ -154,7 +154,28 @@ Mac-A 浏览器 → **`/machines`**
 
 ## 3 · Spawn 两个 agent（UI 操作）
 
+> **先读这段：顺序一定是 Spawn → 再 claude**
+>
+> Folder 字段只是一个"地址"——此刻**不需要存在**。点 Spawn 的瞬间，dashboard 后台会：
+> 1. `mkdir -p <folder>` 创建目录（如果不存在）
+> 2. 在里面跑 `harness init` → 写 `.harness/identity.yaml`、`.harness/checkpoint.jsonl`、`.claude/settings.local.json`（hooks 绑定）、11 个 skill tools
+> 3. 注册到 `~/.harness/registry.jsonl`，广播到 peers
+>
+> 这些**必须**在 `claude` 启动之前完成，因为 Claude Code 开机时读 `.claude/settings.local.json` 挂 hooks — 先 claude 后 init 就挂不上了。
+>
+> 所以流程固定是：
+> 1. 决定一个 folder 路径（新的 or 已有的 project 都行）
+> 2. Dashboard 点 Spawn（它帮你搭好）
+> 3. 你开一个新终端，`cd` 进去，跑 `claude`，**这个终端不要关**
+
 ### 3.1 frontend-dev 到 Mac-A 本地
+
+**Folder 怎么选（两种场景都 OK）**：
+
+| 场景 | Folder 填什么 | 效果 |
+|---|---|---|
+| **新玩，空项目** | `/Users/你自己/harness-test/gamedev1`（目录不存在现场创建）| 干净环境，只有 harness 脚手架 |
+| **已有 repo 上加 agent** | `/Users/你自己/my-projects/neonracer` | 在已有代码边上只加 `.harness/` + `.claude/` 两个子目录，你代码一个字节没动 |
 
 Mac-A 浏览器 → **`/fleet`** → **[ + Spawn Agent ]**：
 
@@ -162,21 +183,26 @@ Mac-A 浏览器 → **`/fleet`** → **[ + Spawn Agent ]**：
 |---|---|
 | Role | `frontend-dev` |
 | Name | `gamedev1` |
-| Folder | `/Users/你自己/harness-test/game-dev`（绝对路径） |
+| Folder | `/Users/你自己/harness-test/gamedev1`（写一个绝对路径，不用提前 mkdir）|
 | Machine | `Mac-A` (local) |
 | Initial prompt (可选) | `You're building the landing page for NeonRacer, a browser 3D racing game. First task will come via mailbox. Follow Iron Laws.` |
 
-点 **[ Spawn ]** → toast `gamedev1 spawned`。
+点 **[ Spawn ]** → toast `gamedev1 spawned`。Fleet 列表立刻多一行。
 
-**人肉一步**（这个省不掉）：Mac-A 新开一个终端，启动它的 claude：
+**现在（也只能现在）启动它的 claude**：
 ```bash
-cd /Users/你自己/harness-test/game-dev
-claude
+# 新开一个终端 tab（不是你跑 harness dashboard 的那个）
+cd /Users/你自己/harness-test/gamedev1
+ls -la                # 应该看到 .harness/ .claude/ skill/ 都已经在了
+claude                # 启动
+# ⚠ 这个终端保持开着，关了 = agent 下线
 ```
 
-**为什么**：Claude Code 需要 TTY。dashboard 不会代你起这个进程，也不应该 —— 你必须看到 claude 在哪个终端里跑。
+**为什么这步 Dashboard 不帮你做**：Claude Code 要一个真的 TTY 来交互、刷新显示、接受你的回车。Dashboard 不应该代你起这个进程 —— 你必须看见 claude 跑在哪个终端里、它输出什么、什么时候要你干预。
 
 ### 3.2 seo-specialist 到 Mac-B
+
+同样的三步顺序，区别只在 Machine 选 Mac-B，Folder 填 Mac-B 上的绝对路径。
 
 回 `/fleet` → **[ + Spawn Agent ]**：
 
@@ -184,14 +210,15 @@ claude
 |---|---|
 | Role | `seo-specialist` |
 | Name | `seo1` |
-| Folder | `/Users/bob/harness-test/seo-agent` ← **Mac-B 上的绝对路径** |
+| Folder | `/Users/bob/harness-test/seo1` ← **Mac-B 上的绝对路径，不用提前创建**|
 | Machine | `Mac-B` ← 关键！换成 Mac-B |
 
-点 **[ Spawn ]** → toast `seo1 spawned on Mac-B`。背后：dashboard 调 `fleet-ssh Mac-B 'harness init …'`，Mac-B 上的 identity 落盘 + 广播到所有 peer。
+点 **[ Spawn ]** → toast `seo1 spawned on Mac-B`。背后：dashboard 调 `fleet-ssh Mac-B 'mkdir -p … && harness init …'`，Mac-B 上的 identity 落盘 + 广播到所有 peer。
 
-**人肉一步**（在 Mac-B 上，或 screen sharing）：
+**现在启动它的 claude**（必须在 Mac-B 本人操作，OAuth TTY 跨机起不来）：
 ```bash
-cd /Users/bob/harness-test/seo-agent
+# 在 Mac-B 的终端（直接坐过去 / VNC / Screen Sharing）
+cd /Users/bob/harness-test/seo1
 claude
 ```
 
