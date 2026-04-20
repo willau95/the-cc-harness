@@ -433,6 +433,38 @@ def equip_many(slugs: list[str], agent_folder: Path | str) -> list[dict]:
     return results
 
 
+def reindex(slug: str) -> dict:
+    """Re-populate the sqlite index from an existing items/<slug>/ dir.
+    Used after cross-machine rsync where files are already in place and
+    we just need to register them so `harness equipment list/get/search`
+    sees them. Does NOT touch content/ — no copy, no move."""
+    d = item_dir(slug)
+    meta_path = d / "meta.yaml"
+    if not meta_path.exists():
+        raise ValueError(f"no meta.yaml for equipment {slug!r} at {d}")
+    meta = yaml.safe_load(meta_path.read_text()) or {}
+    topics_csv = ",".join(meta.get("topics") or [])
+    now = now_iso()
+    with _conn() as c:
+        c.execute("DELETE FROM items WHERE slug=?", (slug,))
+        c.execute(
+            "INSERT INTO items(slug, kind, name, description, source_url, topics, trust, added_by, added_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (slug, meta.get("kind"), meta.get("name") or slug,
+             meta.get("description") or "", meta.get("source_url"),
+             topics_csv, meta.get("trust", "experimental"),
+             meta.get("added_by", "peer@sync"),
+             meta.get("added_at", now), now),
+        )
+        c.execute("DELETE FROM items_fts WHERE slug=?", (slug,))
+        c.execute(
+            "INSERT INTO items_fts(slug, name, description, topics) VALUES (?,?,?,?)",
+            (slug, meta.get("name") or slug, meta.get("description") or "", topics_csv),
+        )
+        c.commit()
+    return {"ok": True, "slug": slug, "meta": meta}
+
+
 def set_trust(slug: str, new_trust: str, by: str = "human@dashboard") -> dict:
     """Update trust tier (experimental / analyst_reviewed / human_verified /
     retracted). Writes to both the meta.yaml AND the sqlite index so search +

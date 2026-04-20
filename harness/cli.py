@@ -548,6 +548,20 @@ def equipment_equip(slugs, folder):
             click.echo(f"  ✗ {r['slug']}: {r.get('error')}", err=True)
 
 
+@equipment_cmd.command(name="reindex")
+@click.argument("slug")
+def equipment_reindex(slug):
+    """Re-populate sqlite from an existing items/<slug>/ dir (no file touching).
+    Used by cross-machine rsync — files already rsynced, only need sqlite update."""
+    import json as _json
+    try:
+        r = equipment.reindex(slug)
+        click.echo(_json.dumps({"ok": True, "slug": slug}))
+    except Exception as e:
+        click.echo(_json.dumps({"ok": False, "error": str(e)}))
+        sys.exit(1)
+
+
 @equipment_cmd.command(name="set-trust")
 @click.argument("slug")
 @click.argument("new_trust",

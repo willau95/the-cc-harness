@@ -243,32 +243,17 @@ def push_equipment_to_peer(machine: str, slugs: list[str]) -> dict:
         except Exception as e:
             failed.append({"slug": slug, "error": str(e)})
             continue
-        # Re-index: run harness equipment get on peer to force sqlite upsert via
-        # the CLI's own path. Easiest approach is to call `harness equipment add`
-        # with --source pointing at the just-rsynced content dir.
-        content_dir = f"$HOME/.harness/equipment/items/{slug}/content"
-        # Read kind from the rsynced meta.yaml
-        kind_r = exec_remote(
+        # Re-index on peer: pokes sqlite from the just-rsynced meta.yaml,
+        # does NOT touch content/ (earlier bug: 'equipment add --source' re-
+        # copied content into itself, nesting content/content/ and breaking
+        # SKILL.md path → subsequent equip failed with 'missing SKILL.md').
+        idx_r = exec_remote(
             machine,
-            f"grep '^kind:' $HOME/.harness/equipment/items/{slug}/meta.yaml | head -1 | awk '{{print $2}}'",
-            timeout=6,
+            f"~/.local/bin/harness equipment reindex {slug}",
+            timeout=10,
         )
-        if not kind_r.get("ok"):
-            failed.append({"slug": slug, "error": "could not read kind from peer meta.yaml"})
-            continue
-        import re as _re
-        kind = _re.sub(r"\x1b\[[0-9;]*m", "", kind_r.get("stdout") or "")
-        kind = _re.sub(r"^\[[^\]\n]+\]\s*\n?", "", kind, flags=_re.MULTILINE).strip()
-        if not kind:
-            failed.append({"slug": slug, "error": "empty kind on peer"})
-            continue
-        add_r = exec_remote(
-            machine,
-            f"~/.local/bin/harness equipment add --slug {slug} --kind {kind} --source {content_dir} 2>&1 | tail -5",
-            timeout=30,
-        )
-        if not add_r.get("ok"):
-            failed.append({"slug": slug, "error": "peer index update failed: " + (add_r.get("stderr") or "")[:100]})
+        if not idx_r.get("ok"):
+            failed.append({"slug": slug, "error": "peer reindex failed: " + (idx_r.get("stderr") or "")[:100]})
             continue
         pushed.append(slug)
     return {"ok": len(failed) == 0, "pushed": pushed, "failed": failed}
