@@ -73,7 +73,8 @@ def kill(agent_id: str) -> dict:
 
 
 def spawn(role: str, name: str, folder: str | Path,
-          initial_prompt: str | None = None) -> dict:
+          initial_prompt: str | None = None,
+          equip_csv: str | None = None) -> dict:
     """Programmatic init: scaffold a new agent folder. Does NOT launch Claude Code."""
     from .cli import REPO_ROOT  # avoid circular at module load
     import json, shutil
@@ -158,10 +159,24 @@ def spawn(role: str, name: str, folder: str | Path,
     project.add_member(folder.name, ident["agent_id"], role)
     heartbeat.beat(ident["agent_id"], via="spawn")
 
+    # Pre-equip any equipment items the spawner specified. Uses Claude Code
+    # native slots (.claude/skills/<slug>/SKILL.md etc.) so claude discovers
+    # them exactly like hand-installed ones.
+    equipped = []
+    if equip_csv:
+        from . import equipment as _eq
+        for slug in [s.strip() for s in equip_csv.split(",") if s.strip()]:
+            try:
+                equipped.append(_eq.equip(slug, folder))
+            except Exception as e:
+                equipped.append({"ok": False, "slug": slug, "error": str(e)})
+
     eventlog.log("human@dashboard", "spawned",
-                 new_agent_id=ident["agent_id"], role=role, folder=str(folder))
+                 new_agent_id=ident["agent_id"], role=role, folder=str(folder),
+                 equipped=[e.get("slug") for e in equipped if e.get("ok")])
     return {"ok": True, "agent_id": ident["agent_id"],
-            "folder": str(folder), "role": role}
+            "folder": str(folder), "role": role,
+            "equipped": equipped}
 
 
 def bulk(action: str, agent_ids: list[str]) -> dict:

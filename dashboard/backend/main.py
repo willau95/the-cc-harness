@@ -22,7 +22,7 @@ if str(REPO_ROOT) not in sys.path:
 from harness import config, registry, heartbeat, arsenal, mailbox, eventlog
 from harness import project, proposals, checkpoint, identity as ident_mod
 from harness import control as fleet_control, remote as fleet_remote
-from harness import liveness, transcript
+from harness import liveness, transcript, equipment
 from harness._util import read_jsonl, now_iso
 
 # Pydantic for request bodies
@@ -35,6 +35,7 @@ class SpawnRequest(BaseModel):
     folder: str
     initial_prompt: str | None = None
     machine: str | None = None  # None = local; else fleet-ssh target name
+    equip: list[str] = []  # equipment slugs to pre-install
 
 
 class BulkRequest(BaseModel):
@@ -59,6 +60,17 @@ class ArsenalAddRequest(BaseModel):
 
 class ArsenalTrustRequest(BaseModel):
     trust: str  # human_verified | retracted | peer_verified | ...
+
+
+class EquipmentAddRequest(BaseModel):
+    slug: str | None = None
+    kind: str
+    source: str
+    name: str | None = None
+    description: str | None = None
+    topics: list[str] = []
+    source_url: str | None = None
+    trust: str = "experimental"
 
 app = FastAPI(title="Claude Harness Dashboard", version="0.1.0")
 
@@ -866,20 +878,58 @@ def api_kill(agent_id: str) -> dict:
 
 @app.post("/api/fleet/spawn")
 def api_spawn(req: SpawnRequest) -> dict:
+    equip_csv = ",".join(req.equip) if req.equip else None
     if req.machine and not fleet_remote.is_local_machine(req.machine):
-        # Remote spawn via fleet-ssh
         r = fleet_remote.spawn_remote_agent(
             machine=req.machine, role=req.role, name=req.name,
             folder=req.folder, initial_prompt=req.initial_prompt,
+            equip_csv=equip_csv,
         )
     else:
         r = fleet_control.spawn(
             role=req.role, name=req.name,
             folder=req.folder, initial_prompt=req.initial_prompt,
+            equip_csv=equip_csv,
         )
     if not r.get("ok"):
         return JSONResponse(r, status_code=400)
     return r
+
+
+# ===== Equipment (武器库) — shared Claude-Code-native artifact library =====
+
+@app.get("/api/equipment")
+def api_equipment_list(kind: str | None = None) -> dict:
+    items = equipment.list_all(kind=kind)
+    return {"count": len(items), "items": items}
+
+
+@app.get("/api/equipment/{slug}")
+def api_equipment_get(slug: str) -> dict:
+    m = equipment.get(slug)
+    if not m:
+        return JSONResponse({"error": "not_found"}, status_code=404)
+    return m
+
+
+@app.post("/api/equipment/add")
+def api_equipment_add(req: EquipmentAddRequest) -> dict:
+    try:
+        meta = equipment.add(
+            slug=req.slug, kind=req.kind, source=req.source,
+            name=req.name, description=req.description, topics=req.topics,
+            source_url=req.source_url, trust=req.trust,
+            added_by="human@dashboard",
+        )
+        return {"ok": True, "meta": meta}
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+
+@app.get("/api/equipment/search/{query}")
+def api_equipment_search(query: str) -> dict:
+    items = equipment.search(query)
+    return {"count": len(items), "items": items}
 
 
 @app.get("/api/machines")

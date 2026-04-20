@@ -27,7 +27,7 @@ import yaml
 from . import (
     config, identity, registry, checkpoint, eventlog,
     arsenal, mailbox, heartbeat, notify, project,
-    proposals, wakeup, digest,
+    proposals, wakeup, digest, equipment,
 )
 from ._util import slugify
 
@@ -114,7 +114,9 @@ def join(fleet_id):
 @click.option("--name", required=True, help="Short slug (e.g. kevin, seo1).")
 @click.option("--project", "project_name", default=None,
               help="Project slug this agent belongs to. Defaults to folder name.")
-def init(role, name, project_name):
+@click.option("--equip", "equip_csv", default=None,
+              help="Comma-separated equipment slugs to pre-install (e.g. --equip twitter-client,prediction-market-ref).")
+def init(role, name, project_name, equip_csv):
     """Scaffold a new agent in the current folder."""
     folder = Path.cwd()
 
@@ -317,10 +319,26 @@ def init(role, name, project_name):
     # claude process exists. Better UX: show "pending" until SessionStart
     # fires its own heartbeat.
 
+    # Pre-equip: install selected equipment items into Claude Code's native
+    # slots (skills/, commands/, agents/, settings mcpServers, CLAUDE.md).
+    equipped: list[dict] = []
+    if equip_csv:
+        for slug in [s.strip() for s in equip_csv.split(",") if s.strip()]:
+            try:
+                r = equipment.equip(slug, folder)
+                equipped.append(r)
+            except Exception as e:
+                click.echo(f"  [warn] failed to equip {slug}: {e}", err=True)
+
     click.echo(f"✓ Agent {ident['agent_id']} initialized.")
     click.echo(f"  Role:     {role}")
     click.echo(f"  Project:  {proj}")
     click.echo(f"  Folder:   {folder}")
+    if equipped:
+        click.echo(f"  Equipped: {len(equipped)} item(s)")
+        for e in equipped:
+            if e.get("ok"):
+                click.echo(f"    ✓ {e['slug']} ({e['kind']}) → {e['installed_to'][0]}")
 
     # Warn about ANTHROPIC_BASE_URL — a common proxy leftover that causes
     # claude to ConnectionRefused against a dead local port.
@@ -428,6 +446,106 @@ def receive(agent, limit):
             "created_at": m.get("created_at"),
         } for m in msgs],
     }, ensure_ascii=False))
+
+
+@cli.group(name="equipment")
+def equipment_cmd():
+    """武器库 — shared library of Claude Code skills/commands/subagents/repos."""
+
+
+@equipment_cmd.command(name="add")
+@click.option("--slug", default=None, help="Short identifier. Auto-derived from source if omitted.")
+@click.option("--kind", required=True,
+              type=click.Choice(sorted(equipment.VALID_KINDS)),
+              help="skill | command | subagent | mcp | hook | repo | preamble")
+@click.option("--source", required=True,
+              help="Local path (dir or file) or git URL to import.")
+@click.option("--name", default=None, help="Display name (auto-derived if omitted).")
+@click.option("--description", default=None, help="When-to-use description.")
+@click.option("--topics", default="", help="Comma-separated topic tags.")
+@click.option("--source-url", "source_url", default=None,
+              help="Canonical URL if source is a local clone.")
+@click.option("--trust", default="experimental",
+              type=click.Choice(sorted(equipment.VALID_TRUST)))
+def equipment_add(slug, kind, source, name, description, topics, source_url, trust):
+    """Import a skill/command/etc into the equipment library."""
+    topics_list = [t.strip() for t in topics.split(",") if t.strip()]
+    meta = equipment.add(
+        slug=slug, kind=kind, source=source,
+        name=name, description=description, topics=topics_list,
+        source_url=source_url, trust=trust,
+    )
+    click.echo(f"✓ added equipment `{meta['slug']}` ({meta['kind']})")
+    click.echo(f"  name: {meta['name']}")
+    if meta.get("description"):
+        click.echo(f"  desc: {meta['description'][:120]}")
+    click.echo(f"  path: {equipment.item_dir(meta['slug'])}")
+
+
+@equipment_cmd.command(name="list")
+@click.option("--kind", default=None, help="Filter by kind.")
+def equipment_list(kind):
+    """List all items in the equipment library."""
+    items = equipment.list_all(kind=kind)
+    if not items:
+        click.echo("(empty)")
+        return
+    for m in items:
+        topics = " · " + " ".join(m["topics"]) if m["topics"] else ""
+        click.echo(f"  {m['slug']:30s} [{m['kind']:10s}] {m['name']}{topics}")
+
+
+@equipment_cmd.command(name="get")
+@click.argument("slug")
+def equipment_get(slug):
+    """Show full metadata + analysis.md for one item."""
+    m = equipment.get(slug)
+    if not m:
+        click.echo(f"(not found: {slug})", err=True)
+        sys.exit(1)
+    click.echo(f"# {m['name']}  ({m['kind']} · trust={m.get('trust')})")
+    click.echo(f"slug: {m['slug']}")
+    if m.get("source_url"):
+        click.echo(f"source_url: {m['source_url']}")
+    if m.get("topics"):
+        click.echo(f"topics: {', '.join(m['topics'])}")
+    click.echo()
+    if m.get("description"):
+        click.echo(m["description"])
+        click.echo()
+    if m.get("analysis"):
+        click.echo("--- analysis.md ---")
+        click.echo(m["analysis"])
+
+
+@equipment_cmd.command(name="search")
+@click.argument("query")
+def equipment_search(query):
+    """Full-text search across name + description + topics."""
+    items = equipment.search(query)
+    if not items:
+        click.echo("(no matches)")
+        return
+    for m in items:
+        click.echo(f"  {m['slug']:30s} [{m['kind']}] {m['name']}")
+
+
+@equipment_cmd.command(name="equip")
+@click.argument("slugs", nargs=-1, required=True)
+@click.option("--folder", default=None,
+              help="Target agent folder. Defaults to cwd.")
+def equipment_equip(slugs, folder):
+    """Install one or more equipment items into an agent folder."""
+    target = Path(folder).expanduser().resolve() if folder else Path.cwd()
+    if not (target / ".harness" / "agent.yaml").exists():
+        click.echo(f"✗ {target} is not a harness agent folder (no .harness/agent.yaml)", err=True)
+        sys.exit(1)
+    results = equipment.equip_many(list(slugs), target)
+    for r in results:
+        if r.get("ok"):
+            click.echo(f"  ✓ {r['slug']} ({r['kind']}) → {r['installed_to'][0]}")
+        else:
+            click.echo(f"  ✗ {r['slug']}: {r.get('error')}", err=True)
 
 
 @cli.group(name="events")

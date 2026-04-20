@@ -196,15 +196,17 @@ def bootstrap_peer_machine(machine: str) -> dict:
 
 
 def spawn_remote_agent(machine: str, role: str, name: str, folder: str,
-                        initial_prompt: str | None = None) -> dict:
+                        initial_prompt: str | None = None,
+                        equip_csv: str | None = None) -> dict:
     """Scaffold a new agent on a remote machine (runs `harness init` there).
     Does NOT start `claude` — that requires a TTY the caller doesn't own.
     Returns {ok, agent_id, folder, machine}.
     """
     folder_esc = folder.replace("'", "'\"'\"'")
+    equip_part = f" --equip {equip_csv}" if equip_csv else ""
     cmd = (
         f"mkdir -p '{folder_esc}' && cd '{folder_esc}' && "
-        f"~/.local/bin/harness init --role {role} --name {name}"
+        f"~/.local/bin/harness init --role {role} --name {name}{equip_part}"
     )
     # 1. bootstrap peer machine with our peers table so it can reach back
     bootstrap_peer_machine(machine)
