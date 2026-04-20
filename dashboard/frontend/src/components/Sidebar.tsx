@@ -4,6 +4,7 @@ import {
   FolderKanban,
   Gauge,
   LayoutDashboard,
+  Boxes,
   Library,
   ListChecks,
   MessagesSquare,
@@ -60,6 +61,7 @@ export function Sidebar() {
           <SidebarNavItem to="/chat" label="Chat" icon={MessagesSquare} />
           <SidebarNavItem to="/events" label="Events" icon={Activity} />
           <SidebarNavItem to="/arsenal" label="Arsenal" icon={Library} />
+          <SidebarNavItem to="/equipment" label="Equipment" icon={Boxes} />
         </div>
 
         <SidebarSection label="Work">

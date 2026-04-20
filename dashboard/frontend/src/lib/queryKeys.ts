@@ -29,4 +29,6 @@ export const queryKeys = {
   },
   chat: (agentId: string) => ["chat", agentId] as const,
   machines: ["machines"] as const,
+  equipment: ["equipment"] as const,
+  equipment_detail: (slug: string) => ["equipment", slug] as const,
 };

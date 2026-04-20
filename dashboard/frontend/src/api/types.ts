@@ -113,6 +113,7 @@ export interface SpawnBody {
   folder: string;
   initial_prompt?: string;
   machine?: string;
+  equip?: string[];
 }
 
 export interface BulkBody {

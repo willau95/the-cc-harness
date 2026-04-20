@@ -16,6 +16,8 @@ const ProjectDetailPage  = lazy(() => import("@/pages/ProjectDetail").then(m => 
 const ProposalsPage      = lazy(() => import("@/pages/Proposals").then(m => ({ default: m.ProposalsPage })));
 const ArsenalPage        = lazy(() => import("@/pages/Arsenal").then(m => ({ default: m.ArsenalPage })));
 const ArsenalDetailPage  = lazy(() => import("@/pages/Arsenal").then(m => ({ default: m.ArsenalDetailPage })));
+const EquipmentPage      = lazy(() => import("@/pages/Equipment").then(m => ({ default: m.EquipmentPage })));
+const EquipmentDetailPage = lazy(() => import("@/pages/Equipment").then(m => ({ default: m.EquipmentDetailPage })));
 const TasksPage          = lazy(() => import("@/pages/Tasks").then(m => ({ default: m.TasksPage })));
 const ChatPage           = lazy(() => import("@/pages/Chat").then(m => ({ default: m.ChatPage })));
 const ChatIndexPage      = lazy(() => import("@/pages/ChatIndex").then(m => ({ default: m.ChatIndexPage })));
@@ -40,6 +42,8 @@ export function App() {
           <Route path="/proposals/:tab" element={<ProposalsPage />} />
           <Route path="/arsenal" element={<ArsenalPage />} />
           <Route path="/arsenal/:slug" element={<ArsenalDetailPage />} />
+          <Route path="/equipment" element={<EquipmentPage />} />
+          <Route path="/equipment/:slug" element={<EquipmentDetailPage />} />
           <Route path="/tasks" element={<TasksPage />} />
           <Route path="/tasks/:tab" element={<TasksPage />} />
           <Route path="/chat" element={<ChatIndexPage />} />

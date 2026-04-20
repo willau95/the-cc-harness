@@ -4,6 +4,7 @@ import { fleetApi } from "@/api/fleet";
 import { rolesApi } from "@/api/roles";
 import { machinesApi } from "@/api/machines";
 import { fsApi } from "@/api/fs";
+import { equipmentApi } from "@/api/equipment";
 import { queryKeys } from "@/lib/queryKeys";
 import { useDialogs } from "@/context/DialogContext";
 import { useToast } from "@/context/ToastContext";
@@ -53,6 +54,15 @@ export function SpawnAgentDialog() {
   const [machine, setMachine] = useState<string>("__local__");
   const [mode, setMode] = useState<"new" | "adopt">("new");
   const [adoptPath, setAdoptPath] = useState("");
+  const [equip, setEquip] = useState<string[]>([]);
+
+  const { data: equipData } = useQuery({
+    queryKey: queryKeys.equipment,
+    queryFn: () => equipmentApi.list(),
+    enabled: spawnOpen,
+    staleTime: 60_000,
+  });
+  const equipmentItems = equipData?.items ?? [];
 
   // Fetch parent-dir candidates for the selected machine
   const { data: parentDirs, isLoading: parentsLoading } = useQuery({
@@ -82,6 +92,7 @@ export function SpawnAgentDialog() {
       setMachine("__local__");
       setMode("new");
       setAdoptPath("");
+      setEquip([]);
     }
   }, [spawnOpen]);
 
@@ -121,6 +132,7 @@ export function SpawnAgentDialog() {
         folder: fullFolder,
         initial_prompt: initialPrompt.trim() || undefined,
         machine: machine && machine !== "__local__" ? machine : undefined,
+        equip: equip.length > 0 ? equip : undefined,
       }),
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: queryKeys.fleet });
@@ -313,6 +325,55 @@ export function SpawnAgentDialog() {
                 onChange={(e) => setName(e.target.value)}
                 required
               />
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label>
+                Pre-equip <span className="text-muted-foreground font-normal">(optional — 武器库 items to install at spawn)</span>
+              </Label>
+              {equipmentItems.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  No equipment in library yet. Add some from <code>/equipment</code>.
+                </p>
+              ) : (
+                <div className="max-h-40 overflow-y-auto rounded border border-border bg-background/50 p-2 space-y-1">
+                  {equipmentItems.map((item) => {
+                    const checked = equip.includes(item.slug);
+                    return (
+                      <label
+                        key={item.slug}
+                        className="flex items-start gap-2 text-xs cursor-pointer hover:bg-accent/30 rounded px-1 py-0.5"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            if (e.target.checked) setEquip([...equip, item.slug]);
+                            else setEquip(equip.filter((s) => s !== item.slug));
+                          }}
+                          className="mt-0.5 shrink-0"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-mono text-[11px]">{item.slug}</span>
+                            <span className="text-[9px] px-1 py-0.5 rounded bg-muted font-mono">
+                              {item.kind}
+                            </span>
+                          </div>
+                          {item.description && (
+                            <div className="text-muted-foreground text-[10px] line-clamp-1">{item.description}</div>
+                          )}
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+              {equip.length > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Will equip {equip.length}: <code className="text-foreground">{equip.join(", ")}</code>
+                </p>
+              )}
             </div>
 
             <div className="grid gap-1.5">
