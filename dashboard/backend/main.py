@@ -208,7 +208,7 @@ def api_events(limit: int = 200) -> dict:
             def _fetch(m: dict) -> list[dict] | None:
                 r = fleet_remote.exec_remote(
                     m["name"],
-                    f"~/.local/bin/harness events dump-json --limit {limit}",
+                    f"~/.local/bin/harness events dump-json --limit {limit} --days 2",
                     timeout=8,
                 )
                 if not (r.get("ok") and r.get("stdout")):

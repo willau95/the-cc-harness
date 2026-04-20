@@ -1,429 +1,360 @@
-# 完整跨设备场景手动走查 — Zero → N-Mac N-Agent
+# 完整手动测试走查 — Zero → N-Mac N-Agent 协作
 
-> 目标读者：一台什么都没装的 Mac，只在 GitHub 上看到过 this repo。
-> 终点：多台 Mac 协作完成一个真实任务，你只在 dashboard 上操作。
+> **目标读者**：一台什么都没装的 Mac，只在 GitHub 上看过这个 repo。
+> **终点**：多台 Mac 协作完成一个真实任务，你只在 dashboard 上操作。
 >
-> **每一步都告诉你：**
-> 1. 在哪台机器、哪个窗口（终端 / dashboard / 浏览器）
-> 2. 复制-粘贴的命令或点击动作
-> 3. 期望看到的结果（命令输出、UI 变化）
-> 4. 如果不符合期望，到哪里排查
+> 每一步告诉你：**在哪台机器 / 哪个窗口** · **敲什么命令或点什么按钮** · **期望看到什么** · **出错去哪查**。
+
+## 目录
+
+- [0 · 角色设定 + 真实场景](#0--角色设定--真实场景)
+- [1 · Mac-A 从零安装（8 分钟）](#1--mac-a-从零安装8-分钟)
+- [2 · Mac-B 接入 fleet（UI 主导，5 分钟）](#2--mac-b-接入-fleet-ui-主导5-分钟)
+- [3 · Spawn 两个 agent（UI 操作）](#3--spawn-两个-agentui-操作)
+- [4 · 真实跨机协作（15–25 分钟）](#4--真实跨机协作1525-分钟)
+- [5 · Human-in-the-loop 硬控制](#5--human-in-the-loop-硬控制)
+- [6 · Self-evolution: proposals 审批](#6--self-evolution-proposals-审批)
+- [📊 完成度 · 当前 v0.2 支持多少](#-完成度--当前-v02-支持多少)
+- [🛟 常见问题排查](#-常见问题排查)
 
 ---
 
-## 角色设定
+## 0 · 角色设定 + 真实场景
 
-- **Mac-A**（你坐的这台）：主控 / CEO。dashboard 只在这台跑。
-- **Mac-B**：协作 peer。会跑一个 agent 帮 Mac-A 完成任务。
-- **场景**：你在做一个浏览器 3D 小游戏的官网，需要：
-  - Mac-A 上：`frontend-dev` agent 写 landing page 代码
-  - Mac-B 上：`seo-specialist` agent 研究 2026 年 Google 对浏览器游戏的排名因子，产出 arsenal 条目
-  - 二者跨机通信，SEO 把研究结果喂给 frontend-dev
-  - 你在 dashboard 上审批 arsenal 条目、监控进度、必要时 pause / 发指示
+| | |
+|---|---|
+| **Mac-A** | 你坐的这台。dashboard 只在这跑。 |
+| **Mac-B** | 协作 peer。会跑一个 agent 帮你。 |
+| **场景** | 为一个浏览器 3D 赛车游戏 `NeonRacer` 做 landing page |
+| **分工** | Mac-A: `frontend-dev` 写代码 · Mac-B: `seo-specialist` 研究 2026 Google SEO 要求，写入 arsenal |
+| **你的角色** | CEO — 只点 dashboard、审 arsenal、批 proposal、必要时 pause |
 
 ---
 
-## ACT I — 零起点安装 Mac-A（10 分钟）
+## 1 · Mac-A 从零安装（8 分钟）
 
-### 1.1 前置检查
-
-**在哪里**：Mac-A，打开 `Terminal.app`
+### 1.1 前置（2 分钟）
 
 ```bash
-# 确认基础环境
-xcode-select -p || xcode-select --install       # Command Line Tools
+# Mac-A 终端
+xcode-select -p || xcode-select --install       # 图形向导，一路 OK
 python3 --version                                # ≥ 3.11
 node --version                                   # ≥ 20
+brew --version                                   # 如缺：/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 ```
 
-**期望**：三条命令都返回版本号，不报 "command not found"。
+如缺 Python/Node：
+```bash
+brew install python@3.12 node@22
+```
 
-**不符合**：
-- 缺 CLT → 弹出图形安装向导，装完再继续
-- 缺 Python → `brew install python@3.12`
-- 缺 Node → `brew install node@22`
-
-### 1.2 装 Claude Code（harness 的 runtime）
+### 1.2 Claude Code（runtime）
 
 ```bash
 curl -fsSL https://claude.ai/install.sh | bash
-claude login
+claude login       # 浏览器 OAuth
 ```
 
-**期望**：浏览器打开 OAuth 页面，登录后终端显示 `✓ Logged in`。
+**为什么重要**：harness 是 Claude Code 的外骨骼，不是替代品。每个 agent 是真的 `claude` 进程，用你的订阅登录，**不需要 API credits**。
 
-**为什么**：harness 是 Claude Code 的外骨骼，不是替代品。一个 agent = 一个 `claude` 进程。
-
-### 1.3 装 mac-fleet-control（跨机 SSH 的传输层）
-
-```bash
-git clone https://github.com/willau95/mac-fleet-control ~/mac-fleet-control
-cd ~/mac-fleet-control && ./install.sh
-```
-
-**期望**：`fleet-ssh --help` 可以用。
-
-### 1.4 装 Tailscale（跨机 VPN）
+### 1.3 Tailscale + mac-fleet-control（跨机必备）
 
 ```bash
 brew install --cask tailscale
-open -a Tailscale
-# 在 Tailscale GUI 里用同一个账户登录（Mac-A 和 Mac-B 都要用同一个）
-tailscale ip -4
-# 记下 Mac-A 的 Tailscale IP，例如 100.100.50.1
+open -a Tailscale       # GUI 里登录（Mac-A 和 Mac-B 用同一个账户）
+tailscale ip -4         # 记下 Mac-A 的 IP，例 100.100.50.1
+
+git clone https://github.com/willau95/mac-fleet-control ~/mac-fleet-control
+cd ~/mac-fleet-control && ./install.sh
+fleet-ssh --help        # 应该能用
 ```
 
-### 1.5 装 harness 本体
+### 1.4 harness 本体
 
 ```bash
 git clone https://github.com/willau95/the-cc-harness ~/the-cc-harness
 cd ~/the-cc-harness && ./install.sh
+exec zsh                # 重载 PATH
+harness --version       # → harness 0.2.0
+harness dashboard       # → http://localhost:9999
 ```
 
-**期望**：
-```
-✓ Installed harness CLI at ~/.local/bin/harness
-✓ Built dashboard frontend
-✓ Done. Run: harness dashboard
-```
-
-确认 PATH 里有：
-```bash
-which harness
-# /Users/xxx/.local/bin/harness
-harness --version
-# harness 0.2.0
-```
-
-### 1.6 启动 dashboard
-
-```bash
-harness dashboard
-```
-
-**期望**：终端输出 `Uvicorn running on http://127.0.0.1:9999`。
-
-浏览器打开 → `http://127.0.0.1:9999` → 看到一个空 Dashboard（0 agents online、0 events、0 projects）。
+**期望**：浏览器打开 dashboard，左侧 sidebar 有 Dashboard / Machines / Fleet / Chat / Events / Arsenal / Tasks / Proposals / Projects。当前是空的（0 agents、0 events）。
 
 ---
 
-## ACT II — 把 Mac-B 接进来（10 分钟）
+## 2 · Mac-B 接入 fleet（UI 主导，5 分钟）
 
-### 2.1 Mac-B 上做一次和 ACT I 一样的事
+### 2.1 Mac-B 上的一次性本机准备（只需做 1.2 + 1.3）
 
-**在哪里**：Mac-B，`Terminal.app`
+在 Mac-B 终端：
+```bash
+# Tailscale（同一个账户！）
+brew install --cask tailscale && open -a Tailscale
+tailscale ip -4    # 记下，例 100.100.50.2
+whoami             # 记下用户名，例 bob
 
-把 1.1 ~ 1.5 全做一遍。**不要**在 Mac-B 上跑 `harness dashboard` — dashboard 只在 Mac-A 跑。
+# Claude Code（用你自己的订阅登录）
+curl -fsSL https://claude.ai/install.sh | bash
+claude login
+```
 
-记下 Mac-B 的 Tailscale IP（`tailscale ip -4`），例如 `100.100.50.2`，和 Mac-B 的用户名（`whoami`，例如 `bob`）。
+**这一步必须在 Mac-B 本人操作**：OAuth 需要浏览器。**不要**在 Mac-B 上装 harness、跑 dashboard — 接下来你在 Mac-A 的 UI 里远程搞定。
 
 ### 2.2 回 Mac-A：加 Mac-B 到 fleet
 
-**在哪里**：Mac-A，`Terminal.app`
+Mac-A 终端（只这一次，以后全部 UI 操作）：
 
 ```bash
-# 先确认能 Tailscale ping 通
+# 测 Tailscale 通
 tailscale ping 100.100.50.2
-# Expected: pong from … via direct
 
-# 注册 Mac-B（这会推 SSH 公钥过去；Mac-B 可能弹确认）
+# 注册 peer（推 SSH 公钥）
 fleet-ssh add Mac-B 100.100.50.2 bob
 
-# 测试跨机命令
-fleet-ssh Mac-B 'echo hello from $(hostname)'
-# Expected: hello from mac-b.local
+# 验证
+fleet-ssh Mac-B 'echo "hello from $(hostname)"'
 ```
 
-**不符合**：
-- `permission denied (publickey)` → 手动加 `~/.ssh/id_ed25519.pub` 到 Mac-B 的 `~/.ssh/authorized_keys`
-- `no route to host` → 检查两台都登录了同一 Tailscale 账户
+**不符合预期**：
+- `permission denied (publickey)` → 手动把 `~/.ssh/id_ed25519.pub` 加到 Mac-B 的 `~/.ssh/authorized_keys`
+- `no route to host` → 两台都登同一 Tailscale 账户？`tailscale status` 看
 
-### 2.3 打开 dashboard 的 Machines 页
+### 2.3 UI 里继续（关键！）
 
-**在哪里**：Mac-A 浏览器，`http://127.0.0.1:9999/machines`
+Mac-A 浏览器 → **`/machines`**
 
 **期望看到**：
-- 顶部 PageHelp 讲解
-- 卡片网格里有：
-  - `Mac-A`（带 `local` 徽章、绿点）
-  - `Mac-B`（绿点、延迟 ~xxx ms、**Harness: not installed**）
-- Mac-B 卡上显示警告：_SSH works but harness is missing._
+- `Mac-A` 卡 — `local` 徽章、绿点、Harness: `local`
+- `Mac-B` 卡 — 绿点、延迟 ~XXXms、**Harness: not installed**、黄色提示框 "SSH works but harness is missing"
 
-**这时你在 UI 上点**：
-- 点 Mac-B 卡上的 **[ Test ]** → bottom-right 弹绿色 toast `Mac-B online · xxxms`
-- 点 **[ Bootstrap ]** → toast `Mac-B: peers.yaml updated (1 peers)` （把 Mac-A 的坐标教给了 Mac-B，这样 Mac-B 的 agent 之后能反向发消息过来）
+**点击操作**：
+1. **[ Test ]** on Mac-B → bottom-right 弹绿 toast `Mac-B online · XXXms`
+2. **[ Install ]** on Mac-B → 1–3 分钟等待 → toast `Mac-B: harness installed` → 卡片刷新后 Harness 变绿 ✓
+3. **[ Bootstrap ]** on Mac-B → toast `Mac-B: peers.yaml updated (1 peers)` — 把 Mac-A 的坐标教给 Mac-B，这样 Mac-B 上的 agent 之后能反向 send_message 到 Mac-A
 
-### 2.4 给 Mac-B 装 harness
-
-目前必须在终端跑（UI 不会远程 git clone — 这是故意的，避免 dashboard 对 peer 有任意写权）：
-
-```bash
-fleet-ssh Mac-B 'git clone https://github.com/willau95/the-cc-harness ~/the-cc-harness && cd ~/the-cc-harness && ./install.sh'
-```
-
-等 1-2 分钟跑完，回 Machines 页点 **Refresh**。
-
-**期望**：Mac-B 卡变成 `Harness: harness 0.2.0`，警告框消失。
-
-### 2.5 Mac-B 上登录 Claude Code
-
-这一步必须本人在 Mac-B 上做（OAuth 需要浏览器）：
-
-```
-在 Mac-B 上打开 Terminal：
-  claude login
-  （按提示在浏览器登录）
-```
-
-这是为什么 harness 优于 API-key 方案：你在 Mac-B 上仍然用自己的 Claude Pro/Max/Teams 订阅，不需要 API credits。
+**这一步替换了以前手动 `fleet-ssh Mac-B 'git clone + install.sh'`**。
 
 ---
 
-## ACT III — Spawn 两个 agent 开干（5 分钟）
+## 3 · Spawn 两个 agent（UI 操作）
 
-### 3.1 Spawn frontend-dev 到 Mac-A 本地
+### 3.1 frontend-dev 到 Mac-A 本地
 
-**在哪里**：Mac-A 浏览器，`/fleet`
+Mac-A 浏览器 → **`/fleet`** → **[ + Spawn Agent ]**：
 
-点 **[ + Spawn Agent ]** → 弹出对话框：
-
-| 字段 | 填什么 |
+| 字段 | 填 |
 |---|---|
 | Role | `frontend-dev` |
 | Name | `gamedev1` |
-| Folder (absolute) | `/Users/你自己/harness-test/game-dev` |
-| Machine | `mads-mac-mini` (local) |
-| Initial prompt (可选) | `You are building the landing page for a browser 3D game called NeonRacer. First task will come via mailbox.` |
+| Folder | `/Users/你自己/harness-test/game-dev`（绝对路径） |
+| Machine | `Mac-A` (local) |
+| Initial prompt (可选) | `You're building the landing page for NeonRacer, a browser 3D racing game. First task will come via mailbox. Follow Iron Laws.` |
 
-点 **[ Spawn ]**。
+点 **[ Spawn ]** → toast `gamedev1 spawned`。
 
-**期望**：
-- Dialog 关闭，toast `gamedev1 spawned`
-- Fleet 列表多一条 `mads-mac-mini-gamedev1-xxxxx` · `frontend-dev` · 绿点 online
-
-**背后发生了什么**：
-1. Dashboard POST `/api/fleet/spawn` → 本地 `harness init` 在新 folder 里搭目录
-2. 注册表广播到所有 peer（Mac-B 也收到了这个新 agent 的坐标）
-3. Identity + mailbox + checkpoint 文件落盘
-
-**你现在要做的唯一人肉步骤**：打开 Mac-A 一个新终端，启动它的 `claude`：
-
+**人肉一步**（这个省不掉）：Mac-A 新开一个终端，启动它的 claude：
 ```bash
 cd /Users/你自己/harness-test/game-dev
 claude
 ```
 
-Claude Code 启动，它的 hooks 会自动打心跳、fleet 页面上绿点保持住。不要关这个终端。
+**为什么**：Claude Code 需要 TTY。dashboard 不会代你起这个进程，也不应该 —— 你必须看到 claude 在哪个终端里跑。
 
-### 3.2 Spawn seo-specialist 到 Mac-B
+### 3.2 seo-specialist 到 Mac-B
 
-**在哪里**：Mac-A 浏览器，再次点 **[ + Spawn Agent ]**
+回 `/fleet` → **[ + Spawn Agent ]**：
 
-| 字段 | 填什么 |
+| 字段 | 填 |
 |---|---|
 | Role | `seo-specialist` |
 | Name | `seo1` |
-| Folder | `/Users/bob/harness-test/seo-agent`（Mac-B 上的绝对路径） |
-| Machine | **Mac-B** ← 这里选 Mac-B，不是 local |
+| Folder | `/Users/bob/harness-test/seo-agent` ← **Mac-B 上的绝对路径** |
+| Machine | `Mac-B` ← 关键！换成 Mac-B |
 
-点 **[ Spawn ]**。
+点 **[ Spawn ]** → toast `seo1 spawned on Mac-B`。背后：dashboard 调 `fleet-ssh Mac-B 'harness init …'`，Mac-B 上的 identity 落盘 + 广播到所有 peer。
 
-**期望**：toast `seo1 spawned on Mac-B`，Fleet 里多一条 `Mac-B-seo1-xxxxx`。
-
-**背后发生了什么**：
-- `/api/fleet/spawn` 检测到 machine != local → 走 `remote.spawn_remote_agent`
-- fleet-ssh 到 Mac-B 跑 `harness init`
-- peers.yaml 再次广播
-- 本地 registry 也登记这个 remote agent
-
-**人肉步骤**：在 Mac-B 上（用 Terminal 或 Screen Sharing）：
+**人肉一步**（在 Mac-B 上，或 screen sharing）：
 ```bash
 cd /Users/bob/harness-test/seo-agent
 claude
 ```
 
-### 3.3 在 Fleet 页看两个绿点
+### 3.3 验证
 
-浏览器 `/fleet`：两条 agent，都 online。Machines 页：两台 Mac 的 `Agents` 列都是 1。
+Mac-A 浏览器：
+- `/fleet` → 2 行，都绿点 online
+- `/machines` → Mac-A 卡 Agents 列 = 1，Mac-B = 1
+- `/events` → 每个 agent 刚 heartbeat 的条目，Mac-B 那条带 `on Mac-B` 徽章 ✓
 
 ---
 
-## ACT IV — 真的跑起来：跨机协作（15–25 分钟）
+## 4 · 真实跨机协作（15–25 分钟）
 
-### 4.1 Dashboard 发第一条指令给 frontend-dev
+### 4.1 给 frontend-dev 下任务
 
-**在哪里**：Mac-A 浏览器，`/chat`
-
-点 `mads-mac-mini-gamedev1-xxxxx` 进入 chat 线程。在底部输入：
+`/chat` → 点 `gamedev1` 进 chat 线程 → 输入：
 
 ```
 任务：为 NeonRacer（浏览器 3D 赛车游戏）写 landing page。
 
-做这两件事：
-1. 发消息给 seo1（角色 seo-specialist，在 Mac-B 上）——
+分两步：
+1. 先发 send_message 给 seo1（seo-specialist, on Mac-B）：
    subject: "seo_requirements_request"
-   body: "我要给 NeonRacer 做 landing page。帮我找 2026 年 Google
-   对浏览器 3D 游戏的 SEO 核心要求，最好是 web.dev 或 Google
-   Search Central 的一手资料。产出 arsenal 条目我可以引用。"
-2. 等 SEO 回复后，按其建议写 index.html + meta tags。
+   body: "为 NeonRacer landing page 找 2026 Google 浏览器 3D 游戏的
+   SEO 核心要求。只用一手源（web.dev / developers.google.com）。
+   产出 arsenal 条目我可以引用。"
 
-准备好了就开始。
+2. 等 seo1 回复后，按其建议写 index.html + meta tags。
+
+做完 send_message 到 human@dashboard 汇报。
 ```
 
-点 **[ Send ]**。
+点 **[ Send ]** → 消息出现（右对齐，human@dashboard）。
 
-**期望**：
-- 你的消息出现在 chat 里（右对齐，human@dashboard）
-- 几秒内 `gamedev1` 的 claude 进程收到 hook 通知，开始执行：
-  - 调 `send_message` tool → subject "seo_requirements_request" → recipient seo1
-  - 跨机路由：本地 mailbox 写不了 Mac-B → 走 fleet-ssh 把 envelope 推到 Mac-B 的 `~/.harness/mailbox/seo1-xxx/inbox.jsonl`
+### 4.2 watch 它跑
 
-**去哪看是否真的发出去了**：`/events` → 过滤 `gamedev1` → 应该看到 `sent_message`，body 里有 to=`seo1-xxxxx`。
+Mac-A 浏览器开两个 tab：
+- tab 1: `/events` — 实时流，每几秒自动刷新
+- tab 2: `/arsenal` — 监控新条目
 
-### 4.2 SEO agent 在 Mac-B 收件、研究、回信
-
-这一步完全是 agent 自主：
-
-1. `seo1` 的 claude session 收到 hook 通知 → wake-up pack 里看到新 inbound message
-2. `seo1` 调 `WebSearch` + `WebFetch` → 读 web.dev 和 Google Search Central 的 2026 指南
-3. 每抓到一个可引用的源，调 `arsenal_add` → 创建 trust=`agent_summary` 的条目
-4. 最后调 `send_message` 回给 `gamedev1`，body 里列 arsenal slug + 主要结论
-
-**在哪里看**：`/events` 实时刷新，会依次出现：
-- `seo1 · received_message` (刚收到)
-- `seo1 · tool_call webSearch ×3`
-- `seo1 · arsenal_add` (重复几条)
-- `seo1 · sent_message` (给 gamedev1 回信)
-
-### 4.3 你作为 CEO 审核 arsenal 条目
-
-**在哪里**：`/arsenal`
-
-几分钟后，`/arsenal` 页面里会出现 3–5 条 `trust: agent summary`、`on Mac-B` 的条目。
-
-**点进每一条**（Back 按钮、hint 提示、按钮 disabled 状态都在那里）：
-- 看内容和 source_refs（web.dev 链接）
-- 如果内容靠谱 → **[ Mark verified ]** → badge 变绿色 `human verified`
-- 如果 agent 瞎编了 → **[ Retract ]** → `retracted`，之后引用方会看到 trust 降级
-
-**为什么这步重要**：agent 只能产出 `agent_summary`。从 `agent_summary` → `human_verified` 的唯一通道是你。这是 human-in-the-loop 的锚点。
-
-### 4.4 frontend-dev 收到回信 + 实现
-
-回到 `/chat/mads-mac-mini-gamedev1-xxx`，能看到 SEO 的回信（markdown 渲染的要点 + arsenal 链接）。
-
-frontend-dev 收到后应该：
-1. 读 arsenal 里被你标 verified 的条目优先（低信任的绕开）
-2. 写 `index.html`
-3. 运行 lighthouse 自检
-4. `send_message` 回 `human@dashboard` 说"做完了"
-
-**查任务进度**：`/tasks` → 应该有 frontend-dev 的一条 task，state 经历 `in_progress` → `awaiting_review`。
-
-### 4.5 人工确认最终交付
-
-frontend-dev 在 `awaiting_review` 状态时，你：
-
-**在 `/tasks`** 里点那条 task（状态 `awaiting_review`）→ 读它的 `next_step` 或交付说明
-→ 如果满意，在 chat 里回 "approved, ship it" → agent 把 task 标 `verified` → `done`
-→ 如果要改，回 "改这些点：…" → task 回到 `in_progress`
-
-这就是 Iron Law 里的 "nothing ships without human OK"。
-
----
-
-## ACT V — Pause / Resume / Kill（人在 loop 的硬控制）
-
-### 5.1 发现 agent 跑偏要停下
-
-场景：你看到 seo1 在抓一堆根本不相关的网页 / 在死循环。
-
-**在哪里**：`/fleet` 或 `/agents/seas-imac-3-seo1-xxx`
-
-点 agent 行最右侧的 `…` 菜单或 detail 页的 **[ Pause ]** 按钮。
-
-**发生了什么**：
-- dashboard POST `/api/agents/{id}/pause`
-- 跨机路由到 Mac-B，在 seo1 的 folder 里 `touch .harness/paused`
-- 下一次 seo1 的任何 skill tool call（send_message / arsenal_add / checkpoint_set 等）会在 `_common.py._check_pause()` 短路，返回固定的 paused 响应
-- agent 的 claude 仍在跑但不会做任何写操作
-
-**UI 反馈**：badge 变 amber `paused`，按钮变 **[ Resume ]**，events 里多一条 `paused`。
-
-### 5.2 发消息告诉它往哪走
-
+**期望时序**（每一条都带对应 agent 的 `on Mac-X` 徽章）：
 ```
-(chat 发给 seo1):
-我让你停下了。你刚才在抓 reddit 帖子，那不是一手资料。
-只看 web.dev / developers.google.com / 官方 Chrome / MDN。
-重新来，我 resume 你。
+[gamedev1]      sent_message         → seo1 (cross-machine)
+[seo1, Mac-B]   received_message
+[seo1, Mac-B]   tool_call: WebSearch × 3
+[seo1, Mac-B]   tool_call: WebFetch × 3
+[seo1, Mac-B]   arsenal_add × 3–5
+[seo1, Mac-B]   sent_message         → gamedev1 (cross-machine back)
+[gamedev1]      received_message
+[gamedev1]      tool_call: Write (index.html)
+[gamedev1]      sent_message         → human@dashboard
 ```
 
-### 5.3 Resume
+### 4.3 你作为 CEO 审 arsenal
 
-点 **[ Resume ]**（原来 Pause 的位置），sentinel 文件被删除，下一次 tool call 恢复正常。
+`/arsenal` 看到几条新的 `trust: agent summary`、右侧 `on Mac-B` 徽章。
 
-### 5.4 Kill（终极选项）
+**点进一条**（例 "Mobile-First Indexing Requirements"）：
+- **[ ← Back to Arsenal ]** 顶部
+- Content 区显示内容
+- METADATA 侧栏：Slug / Trust / Source type / Produced by / Produced at / Chain depth
+- SOURCE REFS 里带可点的 web.dev 超链接
+- **Trust hint** 一行："Raw agent output — not yet reviewed. Verify or retract to close the loop."
 
-如果这个 agent 已经没救了：
+**操作**：
+- 内容对了 → **[ Mark verified ]** → badge 立刻变绿 `human verified`，按钮文字变 `Verified ✓`（跨机路由到 Mac-B 的 sqlite 已更新）
+- 内容错了 → **[ Retract ]** → `retracted`，agent 之后引用会看到被降级
 
-- `/agents/xxx` → **[ Kill ]** → 弹确认框
-- 确认后：dashboard 调 `harness kill` → 在那台机器上 `pkill -f "claude.*agent_xxx"`（精确 match folder path）
-- **身份保留**：agent_id、folder、arsenal、checkpoint 都保留在磁盘。你以后可以同名 respawn 继承历史。
+### 4.4 frontend-dev 实现 + awaiting-review
 
----
+回 `/chat/gamedev1-xxx`：看 SEO 回信（markdown 渲染，带 arsenal slug 链接）。
 
-## ACT VI — Self-evolution: Proposals（选做，展示最后一块拼图）
+gamedev1 应该：
+1. 读 arsenal — 优先你标 verified 的
+2. 写 `index.html`、可能跑 lighthouse 自检
+3. 发消息到 `human@dashboard` 说"完成了"
+4. 自己 `checkpoint_set` 把 task 设为 `awaiting_review`
 
-1. 某个 agent 在工作中发现了一个更好的做法（例：它发现 fetch Google Search Central 比 MDN 更权威），调 `propose_skill_update` 工具
-2. 另一个 `critic` 角色 agent 自动被触发，读 proposal、评估、投 `critic_approved` 或 `rejected`
-3. 只有 `critic_approved` 的才出现在 dashboard 的 `/proposals`
-4. 你：读 diff、点 **[ Approve ]** → 改动真的被写进 skill 文件；或 **[ Reject ]** → 归档
-5. 下次对应 agent spawn 时就会带上新版 skill
+**查进度**：`/tasks` → gamedev1 的 task 状态走 `in_progress` → `awaiting_review`。
 
----
+### 4.5 你批准交付
 
-## 当前完成度对照表
+`/tasks` 点那条 `awaiting_review` → 读它的 `next_step` + 交付说明。
 
-| Requirement | 状态 | 可测路径 |
-|---|---|---|
-| Zero-install onboarding (Mac-A) | ✅ | `./install.sh` 一步 |
-| Install on Mac-B via fleet-ssh | ⚠️ | 需要手动 `fleet-ssh Mac-B 'git clone + install'`（dashboard 一键装 peer harness 是 P2） |
-| Cross-machine spawn | ✅ | `/fleet` → Spawn Agent → machine dropdown |
-| Cross-machine messaging (chat, A→B) | ✅ | 已端到端验证（Opus 4.7 ↔ Opus 4.5） |
-| Arsenal aggregation across peers | ✅ | `/arsenal` 自动合并 |
-| Arsenal trust routing to owning peer | ✅ | Mark verified 现在真的写到正确的机器 |
-| Pause / Resume / Kill (cross-machine) | ✅ | 走 sentinel + fleet-ssh 组合 |
-| Events aggregated view | ⚠️ | 目前只看本地 events；跨机 events 合并待做 |
-| Tasks FSM（proposed→done） | ✅ | schema + transitions 在位 |
-| Proposals critic pipeline | ⚠️ | schema 完整，critic agent 自动触发链路待接 |
-| PreCompact digest + wake-up pack | ✅ | hook 落盘，SessionStart `additionalContext` 注入已验证 |
-| Machines management UI | ✅ | `/machines` — 新加的这个 |
-| Dashboard-only operation (no terminal) | ⚠️ | 90% — 只有首次 `claude` 启动 + peer 装机需要终端 |
-
-**"90% dashboard-only"** 的意思：
-- 必须在终端做的事：第一次 `claude login`（OAuth 要浏览器）、`fleet-ssh Mac-B 'install'` 推装包
-- 可以在 dashboard 做：spawn / pause / resume / kill / 发指令 / 审 arsenal / 批 proposal / 看 events / 看 tasks / 看 projects / 管 machines
+- 满意 → 回 chat `"approved, ship it"` → agent 把 task 标 `verified` → `done`
+- 要改 → 回 chat 具体反馈 → task 回到 `in_progress`
 
 ---
 
-## 常见问题排查
+## 5 · Human-in-the-loop 硬控制
+
+### 5.1 Pause（看到 agent 跑偏）
+
+`/fleet` 某 agent 行 `⋯` 菜单 → **[ Pause ]**（或直接 agent detail 页按钮）
+
+**发生了**：dashboard 跨机在 agent folder 里 `touch .harness/paused`。下次该 agent 的任何 skill tool call 会短路返回固定的 paused 响应。claude 仍在跑，但不再写任何东西。
+
+**UI 反馈**：amber `paused` badge、按钮变 Resume、events 多一条 `paused`。
+
+### 5.2 通过 chat 给指示
+
+```
+chat → seo1：
+我刚 pause 你了。你在抓 Reddit 帖子，那不是一手源。
+只用 web.dev / developers.google.com / MDN。resume 后重来。
+```
+
+### 5.3 Resume / Kill
+
+- **[ Resume ]** — sentinel 文件删除，下次 tool call 恢复
+- **[ Kill ]** — 终极选项。pkill claude 进程，但 identity / arsenal / checkpoint / events **全部保留在磁盘**，日后可同名 respawn 继承所有历史
+
+---
+
+## 6 · Self-evolution: proposals 审批
+
+### 6.1 它怎么触发
+
+一个 agent 工作中发现可改进点（例：SEO 发现 Google Search Central 比某博客权威得多） → 调 `propose_skill_update` skill tool：
+
+```python
+propose_skill_update(
+  slug="prefer-google-search-central",
+  content="When citing SEO requirements, prefer developers.google.com/search/docs over blog posts.",
+  rationale="Observed 3 instances where a blog's advice contradicted the official docs"
+)
+```
+
+### 6.2 critic 自动 review（v0.2 新加）
+
+proposal 被创建时，harness 自动查找第一个 `role=critic` 的在跑 agent，push 一条 `critic_review_request` 到它 inbox。critic agent 读完后 call `set_critic_verdict` tool → status 变 `critic_approved` / `needs_revision` / `rejected`。
+
+**前提**：你得 spawn 一个 critic agent（步骤 3.x 里，role 选 `critic`）。否则 proposal 原地等。
+
+### 6.3 你审批
+
+`/proposals` → **Pending** tab → 看到 `critic_approved` 的 proposal
+- 读 diff + rationale + critic 评语
+- **[ Approve ]** → `_promote_skill()` 把 skill 真的写进 `~/.harness/skills/global/<slug>/SKILL.md`。下次 agent spawn 带上它。
+- **[ Reject ]** → 归档
+
+---
+
+## 📊 完成度 · 当前 v0.2 支持多少
+
+| Requirement | 状态 | 怎么测 |
+|---|:---:|---|
+| Zero-install 到 Mac-A 能跑 | ✅ | 按 §1 跑一遍 |
+| UI 里加 Mac-B（Test + Install + Bootstrap）| ✅ | §2.3 三个按钮 |
+| 跨机 spawn agent | ✅ | §3 Spawn dialog 里 Machine 选 Mac-B |
+| 跨机 chat（A ↔ B） | ✅ | §4.1 |
+| Arsenal 跨机聚合 + 归属机 trust 更新 | ✅ | §4.3 |
+| 跨机 events 聚合视图 | ✅ | §3.3 / §4.2 events 带 `on Mac-X` 徽章 |
+| Pause / Resume / Kill 跨机 | ✅ | §5 |
+| PreCompact digest + SessionStart wake-up | ✅ | 自动触发；`~/.harness/logs/hook.log` 可看 |
+| Task FSM proposed → done | ✅ | §4.4-4.5 |
+| Proposal → critic auto-notify | ✅ v0.2 新加 | §6.2（前提 critic agent 在跑）|
+| Critic agent 自己投票（不需要人接力）| ⚠️ | critic 需要被 wake 才读 inbox；待接 auto-poll |
+| Claude login 也在 UI 代理 | ⚠️ | OAuth 必须浏览器；每台 Mac 还得本人登 |
+| 90% dashboard-only 操作 | ✅ | 唯一终端步骤：`claude login` + `claude` 启动 TTY |
+
+---
+
+## 🛟 常见问题排查
 
 | 症状 | 先查 |
 |---|---|
-| `/fleet` 空着 | `harness status` 看本地 registry 有没有条目；登录了 claude 吗 |
-| agent 绿点变灰 | `/events` 看有没有 heartbeat；超过 30 分钟无心跳算 stale |
-| 跨机 spawn 失败 | `/machines` 页看那台 peer 的 Harness 列；`fleet-ssh PeerName 'harness --version'` 直接测 |
-| arsenal 条目点 Mark verified 无变化 | 先看是不是 `on PeerName` 条目，peer 需要 harness ≥ 0.1.1 |
-| chat 消息发出去没反应 | agent 的 claude 进程活着吗？PreCompact hook 在 inbox 堆积时会自动唤醒，但 claude 必须在跑 |
-| PreCompact digest 没写 | `~/.harness/logs/hook.log` 看 hook 是否触发；PATH 问题占 90% |
+| `/fleet` 空 | `harness status` 看本地 registry；claude login 了吗 |
+| agent 绿点变灰（stale） | `/events` 看有无最近 heartbeat；超 30 分钟算 stale |
+| 跨机 spawn 失败 | `/machines` 看 peer 的 Harness 列；点 [ Install ] 重装 |
+| `Mark verified` 无变化 | 条目 `on Mac-B` 但 peer 的 harness < 0.2.0？点 [ Update ] |
+| Chat 发出去没响应 | agent 的 claude 进程活着吗？没 TTY 就没人处理 |
+| PreCompact digest 没写 | `cat ~/.harness/logs/hook.log` — 90% PATH 问题 |
+| Events 看不到 Mac-B 的 | peer harness < 0.2.0 没有 `events dump-json`；点 [ Update ] |
+| Proposals 一直 pending | 没有 `role=critic` 的 agent 在跑 |
+| `harness` not found after install | `exec zsh` 重载 shell |
 
 ---
 
-## 下一步（Phase D 之后的 P1）
-
-1. **Dashboard 一键给 peer 装 harness**（替代 ACT II.2.4）
-2. **跨机 events 合并视图**（用和 arsenal 一样的 aggregate 套路）
-3. **Critic agent 自动触发链路**（proposal → critic 派发 → 结果回传）
-4. **Claude login 代理**（dashboard 触发 OAuth、代填到 peer）
-5. **Budget/quota 监控**（每个 agent 的 token 消耗实时展示）
+**下一步**：当你按这份走完一遍，哪一步不顺，回来告诉我具体症状，我对着修。

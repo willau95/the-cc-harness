@@ -1,111 +1,108 @@
 # the-cc-harness
 
-**A lightweight fleet layer on top of [Claude Code](https://claude.com/claude-code).**
-One folder on one Mac = one agent. Agents share knowledge, message each other across machines, survive context compact, and propose self-improvements you review.
+**A fleet layer on top of [Claude Code](https://claude.com/claude-code).**
+One Claude Code process on one Mac = one agent. This repo turns N of them on N
+Macs into a coordinated team you operate from a single dashboard.
 
-**Status: v0.1 · early · not battle-tested in production yet.**
-
----
-
-## Why this exists
-
-Claude Code is a single-process agent. Run it in N folders across N Macs and you
-get N isolated islands. This repo is the glue that turns them into a coordinated
-fleet:
-
-- **Memory that survives `/compact`** — a Markdown digest is written on every
-  context compaction and re-injected at the next session start as a wake-up pack.
-- **Peer messaging across machines** — file-based JSONL mailboxes synced by
-  [Syncthing](https://syncthing.net/); no broker, no central server.
-- **Shared knowledge base** with provenance & trust tiers (verified · peer_verified
-  · agent_summary · hypothesis · retracted) — the default search filters out
-  low-trust agent-generated summaries so you don't get echo-chamber drift.
-- **Task FSM + iteration budget** — every task has an immutable `original_goal`,
-  legal state transitions, and a `task_budget` shared with delegated peers.
-- **Self-evolution** — agents propose new skills / role updates; a critic agent
-  reviews; you approve via dashboard → promoted to the fleet.
-- **Dashboard** — FastAPI + minimal HTML. Live view of every agent, project,
-  event, proposal.
-
-Everything lives on disk as plain JSONL / YAML / Markdown / SQLite. No hidden
-runtime.
+> **Status · v0.2** — works end-to-end on 2 Macs with real Claude sessions.
+> Daily-dogfooded, not production-hardened. Issues and PRs welcome.
 
 ---
 
-## Quick start
+## What it is (three sentences)
+
+1. **A runtime wrapper, not a replacement.** Every agent is a real `claude`
+   process using your subscription login — no API keys, no broker, no servers.
+2. **Shared state on disk.** Mailboxes, arsenal, events, checkpoints, identities
+   are plain JSONL/YAML/SQLite files. Reasoning about "what happened" means
+   reading `~/.harness/`, nothing hidden.
+3. **Cross-machine by default.** Uses [mac-fleet-control](https://github.com/willau95/mac-fleet-control)
+   (SSH-over-Tailscale) to fan out commands, messages, and state to peer Macs.
+
+---
+
+## Install (one Mac, 5 minutes)
 
 ```bash
-# 1. Clone + install (macOS)
-git clone https://github.com/willau95/the-cc-harness.git
-cd the-cc-harness
-./install.sh
+# Prereqs: macOS · Python 3.11+ · Node 20+ · Claude Code logged in
+git clone https://github.com/willau95/the-cc-harness
+cd the-cc-harness && ./install.sh
 
-# 2. Start Syncthing on each machine you want in the fleet
-#    (keep it running; exchange device IDs + share ~/.harness/)
-syncthing
-
-# 3. In any project folder — set up an agent
-cd ~/projects/whatever
-harness init --role researcher --name kevin
-
-# 4. Start Claude Code normally
-claude
-
-# 5. See the fleet
-harness dashboard    # → http://localhost:9999
+# Launch the dashboard
+harness dashboard
+# → http://localhost:9999
 ```
 
-See [`docs/quickstart.md`](docs/quickstart.md) for details.
+For **cross-machine**, also install on each peer then add it via
+`fleet-ssh add <name> <tailscale-ip> <user>`. After that, spawn / pause / kill /
+message / install-harness-on-peer all happen from the dashboard.
+
+**Full walkthrough** (zero-install → N-Mac collaboration, with a concrete
+browser-game landing-page scenario):
+
+> 📖 **[docs/scenario-full-walkthrough.md](docs/scenario-full-walkthrough.md)**
 
 ---
 
-## CLI reference
+## Core concepts
 
-| Command | Purpose |
+| Concept | What |
 |---|---|
-| `harness join [fleet-id]` | Scaffold `~/.harness/` on a new machine |
-| `harness init --role X --name Y` | Register an agent in the current folder |
-| `harness status` | Fleet overview |
-| `harness send <to> <subj> <body>` | Manual message (testing) |
-| `harness inbox` | Peek at an agent's inbox |
-| `harness roles list` | Available role templates |
-| `harness arsenal add/search/get` | Manage shared knowledge |
-| `harness proposals list/approve/reject` | Review self-evolution queue |
-| `harness dashboard` | Launch web dashboard |
-| `harness digest` | Run onCompact digest manually (test) |
-| `harness wakeup` | Print the wake-up pack (test SessionStart) |
+| **Agent** | A `claude` process in a folder, registered in `~/.harness/registry.jsonl`, with an identity, role, mailbox, checkpoint, events log. |
+| **Role** | A Markdown template (161 shipped in `roles/`) that injects system-prompt guidance + Iron Laws into the agent. |
+| **Arsenal** | Shared knowledge base. Agents write with `trust=agent_summary`; you promote verified items in the dashboard. SQLite FTS5 + Markdown on disk. |
+| **Mailbox** | Per-agent inbox JSONL with v4 envelopes (idempotency_key, provenance_chain, hop_count ≤ 6). Cross-machine routes via fleet-ssh. |
+| **Checkpoint** | Per-agent task FSM (proposed → in_progress → blocked / awaiting_review → verified → done). Append-only JSONL. |
+| **Proposals** | Self-improvement queue. Agents propose skill/role changes; a critic role-agent reviews; you approve in dashboard → promoted. |
+| **Digest + wake-up pack** | PreCompact hook writes a structured summary; SessionStart hook injects it as `additionalContext`. Survives `/compact`. |
 
 ---
 
-## Architecture
+## Dashboard sections
 
-Interactive visualization: [`docs/architecture.html`](docs/architecture.html) —
-open in any browser.
+Every page has an in-UI "what is this?" explainer — no doc-hunting needed.
 
-### Memory model (3 tiers)
+- **Dashboard** — fleet health at a glance
+- **Machines** — which Macs can your fleet reach; Test / Install / Bootstrap peers
+- **Fleet** — agents across every peer; Spawn / Pause / Resume / Kill
+- **Chat** — direct message any agent (markdown rendered, cross-machine)
+- **Events** — merged audit log across the whole fleet
+- **Arsenal** — shared knowledge, with human verification
+- **Tasks** — task FSM across agents, with awaiting-review gate
+- **Projects** — multi-agent collaborations
+- **Proposals** — self-evolution queue awaiting your approval
+
+---
+
+## Architecture (one picture)
+
+Interactive: `docs/architecture.html` (open in any browser).
 
 ```
-TIER 1 · SHORT-TERM (seconds–minutes, per session)
-  Handled by Claude Code natively: messages, tool result storage,
-  speculation overlay, file history. WE DO NOT DUPLICATE THESE.
-
-TIER 2 · MID-TERM (hours–days, per project)
-  Harness-managed:
-  · L1 checkpoint.jsonl     (agent × project state · FSM)
-  · L4 events               (per-agent action log)
-  · L5 digest.md            (onCompact rescue)
-  · projects/state.jsonl    (cross-agent project facts)
-  · projects/members.jsonl  (who's on the project)
-
-TIER 3 · LONG-TERM (weeks–months, fleet-wide)
-  · arsenal/                (shared knowledge · trust-tiered)
-  · roles/                  (static role templates)
-  · roles-evolved/          (critic-approved lessons per role)
-  · proposals/              (skill/role updates awaiting human review)
-  · wisdom/                 (cross-task recurring patterns)
+┌─ Mac-A (your seat) ──────────────────┐   ┌─ Mac-B (peer) ────────────────┐
+│                                      │   │                               │
+│  ┌──────────┐   ┌─────────────────┐  │   │  ┌─ agent: seo1 ──────────┐   │
+│  │ Dashboard │──│ harness daemon   │  │   │  │  claude (OAuth login) │   │
+│  │ (browser)│   │ (FastAPI+SQLite) │  │   │  │  skill tools → JSONL  │   │
+│  └──────────┘   └────────┬────────┘  │   │  └───────────────────────┘   │
+│                          │           │   │                               │
+│  ┌─ agent: gamedev1 ──┐  │  events/  │   │   ~/.harness/…               │
+│  │  claude            │──┼─arsenal/  │   │   (mailbox · checkpoint ·    │
+│  │  skill tools       │  │  mailbox/ │   │    events · arsenal · …)     │
+│  └────────────────────┘  │  …       │   │                               │
+│                          │           │   │                               │
+└──────────────────────────┼──────────┘   └──────────┬────────────────────┘
+                           │                         │
+                           └──── fleet-ssh ──────────┘
+                                 (Tailscale VPN)
+                        spawn · mailbox push · arsenal
+                        fanout · events aggregation · trust
+                        routing · install-harness-on-peer
 ```
 
-### Iron Laws (every agent, every turn, 5 lines)
+---
+
+## Iron Laws (every agent, every turn)
 
 ```
 1. Restate original_goal verbatim every 20 turns or on wake-up.
@@ -115,122 +112,76 @@ TIER 3 · LONG-TERM (weeks–months, fleet-wide)
 5. BLOCKED state requires blocked_on field.
 ```
 
-All other guidance lives in on-demand skills (`harness-conventions`,
-`role-<name>`) so `CLAUDE.md` stays ≤ 400 tokens.
+Everything beyond this lives in on-demand skills so `CLAUDE.md` stays ≤ 400 tokens.
 
 ---
 
-## Layout
+## CLI reference
 
-```
-the-cc-harness/
-├── harness/           Python package (core)
-├── skill/             Claude Code skills (installed into each agent)
-├── hooks/             onCompact + SessionStart bash hooks
-├── roles/             Role templates (researcher, critic, orchestrator, …)
-├── dashboard/         FastAPI backend + vanilla frontend
-├── docs/              architecture.html · quickstart.md
-└── install.sh
-```
-
----
-
-## Design influences
-
-This harness was shaped by reading, analyzing, and cherry-picking from several
-other open projects. Credit where it's due:
-
-- **[Claude Code](https://claude.com/claude-code)** — the runtime. Hooks, skills,
-  MCP, AppStateStore, toolResultStorage, fileHistory, worktree — we use them
-  natively, never reimplement.
-- **Anthropic system prompts** — the tone, safety, and tool-usage conventions.
-- **Hermes Agent (Nous Research)** — iteration budget, grace call, memory/skill
-  nudges, FTS5 sessions, prompt cache awareness, untrusted-content injection defense.
-- **MemPalace** — the PreCompact hook and wake-up pattern that solves context
-  compact amnesia.
-- **gbrain** — provenance-aware knowledge schema (simplified, SQLite-only).
-- **agency-agents (msitarzewski)** — Markdown + YAML-frontmatter role template
-  format.
-- **karpathy-skills (multica-ai)** — behavioral preamble methodology.
-- **gstack (Garry Tan)** — Iron Laws concept, DONE/BLOCKED/NEEDS_CONTEXT status
-  taxonomy, file-based state model.
-- **paperclip (paperclipai)** — dashboard visual language & realtime WebSocket +
-  query invalidation pattern. UI components inspired; backend rewritten.
+| Command | Purpose |
+|---|---|
+| `harness init --role X --name Y` | Scaffold an agent in the current folder |
+| `harness status` | Fleet overview (terminal view) |
+| `harness send <to> <subj> <body>` | Manual message (debugging) |
+| `harness inbox` | Peek at an agent's inbox |
+| `harness roles list` | Available role templates |
+| `harness arsenal add/search/get/set-trust` | Shared knowledge |
+| `harness proposals list / critic-verdict / approve / reject` | Self-evolution queue |
+| `harness events dump-json` | Export events for aggregation (used by dashboard) |
+| `harness dashboard` | Launch the web dashboard |
+| `harness digest` · `harness wakeup` | Manually run PreCompact / SessionStart hooks |
 
 ---
 
 ## Requirements
 
-- macOS (Linux should mostly work; no Windows testing yet)
-- Python 3.11+ (installed via system / brew)
-- Node.js 20+ (dashboard UI build — auto-installed by `./install.sh` via brew)
-- [Syncthing](https://syncthing.net/) (for cross-machine mode; auto-installed)
-- Claude Code CLI
-- One of: [uv](https://docs.astral.sh/uv/) or [pipx](https://pipx.pypa.io/) (auto-installed by `install.sh` via brew if missing)
+- macOS (Linux mostly works; no Windows testing)
+- Python 3.11+, Node 20+
+- [Claude Code](https://claude.com/claude-code) CLI, logged in
+- [mac-fleet-control](https://github.com/willau95/mac-fleet-control) + Tailscale (for cross-machine)
+- Installer picks [uv](https://docs.astral.sh/uv/) or [pipx](https://pipx.pypa.io/) automatically
+
+---
 
 ## Troubleshooting
 
-### `claude` reports "Unable to connect to API (ConnectionRefused)"
-Check your shell env:
-```bash
-echo $ANTHROPIC_BASE_URL
-```
-If it's set to `http://127.0.0.1:<port>`, you have a local Claude proxy tool
-(cc-switch / claude-code-router / vibeproxy) configured but its daemon isn't
-running. Either start the proxy, or:
-```bash
-unset ANTHROPIC_BASE_URL
-```
-…for a one-off session. For permanent, remove the export from `~/.zshrc`.
+See `docs/scenario-full-walkthrough.md` → _Common issues_ at the bottom.
 
-### `harness` not on PATH after install
-The `install.sh` runs `pipx ensurepath` / `uv tool update-shell` to add
-`~/.local/bin` to your shell rc, but the current shell needs a reload:
-```bash
-exec zsh       # or: source ~/.zshrc
-```
-
-### Hooks don't fire when `claude` starts
-Claude Code's settings-watcher only registers hooks from
-`.claude/settings.local.json` that existed **when the session started**.
-`harness init` creates the file — but if `claude` was already running,
-restart it. Or use `/hooks` inside Claude Code to force a reload.
-
-### Agent is shown as "zombie" in the dashboard even though Claude Code is open
-`harness init` was run with an older `_common.py` that didn't auto-heartbeat.
-Re-run `harness init --role <your-role> --name <your-name>` in the agent
-folder — it's idempotent and will install the updated skill tools.
+Quick ones:
+- `harness` not found → `exec zsh` after install (PATH reload)
+- Hooks silent → check `~/.harness/logs/hook.log`; PATH issues are 90%
+- Agent zombie in dashboard but `claude` open → re-run `harness init` in its folder to refresh skill tools
 
 ---
 
-## Status & roadmap
+## Design influences
 
-**Shipped in v0.1 (this commit):**
-- 6-layer memory, Task FSM, peer messaging, onCompact digest + wake-up pack,
-  arsenal with provenance/trust, iteration budget hooks, proposals queue,
-  dashboard basic.
+Read and cherry-picked from:
 
-**Next (P1):**
-- Critic agent auto-review loop (now it's a role template that runs manually)
-- Iteration budget auto-enforcement in send_message
-- Inbox TTL + archive
-- Event log nightly → SQLite archive
-- Rate limiting enforcement
-- Memory nudge (30-turn mini-digest)
-- Replace vanilla dashboard with React (paperclip components)
-
-**Later (P2):**
-- Roles-evolved auto-promotion
-- Wisdom-patterns aggregation
-- MCP exposure of arsenal
-- Multi-tenant
+- **[Claude Code](https://claude.com/claude-code)** — runtime; hooks, skills, MCP, PreCompact/SessionStart
+- **Anthropic system prompts** — tool-use + safety conventions
+- **Hermes Agent (Nous Research)** — iteration budget, memory/skill nudges, untrusted-content defense
+- **MemPalace** — PreCompact digest + SessionStart wake-up pattern
+- **gbrain** — provenance-aware knowledge schema (trust tiers)
+- **agency-agents (msitarzewski)** — Markdown role template format
+- **karpathy-skills (multica-ai)** — Iron Laws methodology
+- **gstack (Garry Tan)** — task FSM + file-based state model
+- **paperclip** — dashboard visual language
 
 ---
 
-## Contributing
+## Roadmap
 
-Early stage — issues and PRs welcome once I've dogfooded enough to have a stable
-API. Until then, feel free to fork and hack.
+**Shipped (v0.2)** — core harness · 6-layer memory · arsenal · mailbox ·
+PreCompact digest · dashboard (React) · cross-machine spawn / chat / arsenal /
+trust / events / install · critic auto-routing · Machines management UI
+
+**P1 (next)** — critic auto-vote loop (critic agent reads proposal inbox,
+calls `propose_verdict` tool automatically) · inbox TTL + archive · Claude
+login delegation via dashboard
+
+**P2** — MCP exposure of arsenal · roles-evolved auto-promotion · token budget
+monitoring
 
 ---
 
