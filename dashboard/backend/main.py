@@ -302,44 +302,200 @@ def api_fleet() -> dict:
     return {"count": len(enriched), "agents": enriched}
 
 
+def _remote_transcript(machine: str, folder: str, limit: int) -> dict:
+    """Pull Claude Code's session jsonl from a peer via fleet-ssh, parse
+    on Mac-A side. Cache 5s so 3s UI poll doesn't re-SSH aggressively."""
+    cache_key = f"transcript-remote::{machine}::{folder}::{limit}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+    # Compute Claude Code's project dir slug on the peer (path → dashes)
+    slug = str(Path(folder).resolve()).replace("/", "-")
+    cmd = (
+        f'D="$HOME/.claude/projects/{slug}"; '
+        f'if [ -d "$D" ]; then '
+        f'  F=$(ls -t "$D"/*.jsonl 2>/dev/null | head -1); '
+        f'  if [ -n "$F" ]; then '
+        f'    echo "SESSION_FILE:$F"; '
+        f'    stat -f "SESSION_MTIME:%m" "$F" 2>/dev/null || stat -c "SESSION_MTIME:%Y" "$F" 2>/dev/null; '
+        f'    stat -f "SESSION_SIZE:%z" "$F" 2>/dev/null || stat -c "SESSION_SIZE:%s" "$F" 2>/dev/null; '
+        f'    echo TRANSCRIPT_BEGIN; '
+        f'    tail -n {max(limit * 4, 400)} "$F"; '
+        f'    echo TRANSCRIPT_END; '
+        f'  else echo NO_SESSION_FILE; fi; '
+        f'else echo NO_PROJECT_DIR; fi'
+    )
+    r = fleet_remote.exec_remote(machine, cmd, timeout=10)
+    if not r.get("ok"):
+        return {"available": False, "reason": "fleet-ssh failed", "timeline": []}
+    out = r.get("stdout") or ""
+    import re as _re
+    out = _re.sub(r"\x1b\[[0-9;]*m", "", out)
+    out = _re.sub(r"^\[[^\]\n]+\]\s*\n?", "", out, flags=_re.MULTILINE)
+    if "NO_PROJECT_DIR" in out:
+        return {"available": False, "reason": "no claude session ever started on this peer for this folder",
+                "timeline": []}
+    if "NO_SESSION_FILE" in out:
+        return {"available": False, "reason": "claude project dir exists but no session jsonl",
+                "timeline": []}
+    session_file = mtime = size = None
+    for line in out.splitlines():
+        if line.startswith("SESSION_FILE:"):
+            session_file = line[len("SESSION_FILE:"):].strip()
+        elif line.startswith("SESSION_MTIME:"):
+            try:
+                mtime = float(line[len("SESSION_MTIME:"):].strip())
+            except ValueError:
+                pass
+        elif line.startswith("SESSION_SIZE:"):
+            try:
+                size = int(line[len("SESSION_SIZE:"):].strip())
+            except ValueError:
+                pass
+    # Extract the raw jsonl chunk between markers
+    if "TRANSCRIPT_BEGIN" not in out or "TRANSCRIPT_END" not in out:
+        return {"available": False, "reason": "could not extract transcript from peer", "timeline": []}
+    chunk = out.split("TRANSCRIPT_BEGIN", 1)[1].split("TRANSCRIPT_END", 1)[0]
+    # Write to a temp file + parse via our local transcript module's parser
+    # logic — but transcript.read_timeline reads from a filename. Inline the
+    # parser instead to avoid tmp-file overhead:
+    import json as _json
+    entries: list[dict] = []
+    for line in chunk.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = _json.loads(line)
+        except _json.JSONDecodeError:
+            continue
+        # Reuse the same shape transcript.read_timeline produces by calling
+        # its helper functions directly.
+        t = rec.get("type")
+        ts = rec.get("timestamp")
+        if t == "user":
+            msg = rec.get("message") or {}
+            content = msg.get("content")
+            if isinstance(content, list):
+                for b in content:
+                    if isinstance(b, dict) and b.get("type") == "tool_result":
+                        result_text = transcript._extract_text([b])
+                        entries.append({
+                            "ts": ts, "role": "tool", "kind": "tool_result",
+                            "tool_id": b.get("tool_use_id"),
+                            "text": result_text[:4000],
+                            "truncated": len(result_text) > 4000,
+                            "is_error": bool(b.get("is_error")),
+                        })
+                text = transcript._extract_text([x for x in content if isinstance(x, dict) and x.get("type") == "text"])
+                if text:
+                    entries.append({"ts": ts, "role": "user", "kind": "prompt", "text": text[:4000]})
+            elif isinstance(content, str) and content.strip():
+                entries.append({"ts": ts, "role": "user", "kind": "prompt", "text": content[:4000]})
+        elif t == "assistant":
+            msg = rec.get("message") or {}
+            for b in msg.get("content") or []:
+                if not isinstance(b, dict):
+                    continue
+                bt = b.get("type")
+                if bt == "text":
+                    txt = b.get("text", "")
+                    if txt.strip():
+                        entries.append({"ts": ts, "role": "assistant", "kind": "text", "text": txt[:8000]})
+                elif bt == "thinking":
+                    txt = b.get("thinking", "")
+                    if txt.strip():
+                        entries.append({"ts": ts, "role": "assistant", "kind": "thinking", "text": txt[:4000]})
+                elif bt == "tool_use":
+                    entries.append({
+                        "ts": ts, "role": "assistant", "kind": "tool_use",
+                        "tool_name": b.get("name"),
+                        "tool_id": b.get("id"),
+                        "tool_input_summary": transcript._summarize_tool_input(b.get("name", ""), b.get("input") or {}),
+                        "tool_input": b.get("input") or {},
+                    })
+        elif t == "attachment":
+            att = rec.get("attachment") or {}
+            hook = att.get("hookName")
+            if hook:
+                entries.append({
+                    "ts": ts, "role": "system", "kind": "hook",
+                    "hook_name": hook,
+                    "text": (att.get("stdout") or "")[:1000],
+                })
+    result = {
+        "available": True,
+        "session": {"session_id": Path(session_file or "").stem, "file_path": session_file,
+                    "mtime": mtime, "size_bytes": size},
+        "count": len(entries),
+        "timeline": entries[-limit:],
+    }
+    _cache_put(cache_key, result)
+    return result
+
+
 @app.get("/api/agents/{agent_id}/transcript")
 def api_agent_transcript(agent_id: str, limit: int = 300) -> dict:
     """Return a normalized timeline from Claude Code's per-session JSONL.
-    Lets the dashboard show what the agent is actually thinking / doing /
-    editing, without the user having to switch to the terminal. Local only
-    for v1 — remote transcripts require fleet-ssh tail."""
+    Works for local AND remote agents (remote via fleet-ssh tail)."""
     ag = registry.find(agent_id)
     if not ag:
         return JSONResponse({"error": "not_found"}, status_code=404)
     folder = ag.get("folder")
-    if not folder or not Path(folder).exists():
+    if not folder:
         return {"agent_id": agent_id, "available": False,
-                "reason": "folder not local to this machine", "timeline": []}
-    meta = transcript.session_metadata(folder)
-    if not meta:
-        return {"agent_id": agent_id, "available": False,
-                "reason": "no claude session found for this folder", "timeline": []}
-    tl = transcript.read_timeline(folder, limit=limit)
-    return {"agent_id": agent_id, "available": True,
-            "session": meta, "count": len(tl), "timeline": tl}
+                "reason": "no folder in registry", "timeline": []}
+    # Local path
+    if Path(folder).exists():
+        meta = transcript.session_metadata(folder)
+        if not meta:
+            return {"agent_id": agent_id, "available": False,
+                    "reason": "no claude session found for this folder", "timeline": []}
+        tl = transcript.read_timeline(folder, limit=limit)
+        return {"agent_id": agent_id, "available": True,
+                "session": meta, "count": len(tl), "timeline": tl}
+    # Remote path — pull via fleet-ssh
+    machine = ag.get("machine")
+    if machine and not fleet_remote.is_local_machine(machine) and fleet_remote.fleet_ssh_available():
+        r = _remote_transcript(machine, folder, limit)
+        return {"agent_id": agent_id, **r}
+    return {"agent_id": agent_id, "available": False,
+            "reason": f"folder not local and no fleet-ssh for machine={machine}",
+            "timeline": []}
 
 
 @app.get("/api/agents/{agent_id}/activity")
 def api_agent_activity(agent_id: str) -> dict:
-    """Read the PreToolUse/PostToolUse-written current_activity.json."""
+    """Read the PreToolUse/PostToolUse-written current_activity.json.
+    Local: direct file read. Remote: fleet-ssh cat."""
     ag = registry.find(agent_id)
     if not ag:
         return JSONResponse({"error": "not_found"}, status_code=404)
     folder = ag.get("folder")
     if not folder:
         return {"activity": None}
-    path = Path(folder) / ".harness" / "current_activity.json"
-    if not path.exists():
-        return {"activity": None}
-    try:
-        return {"activity": json.loads(path.read_text())}
-    except Exception:
-        return {"activity": None}
+    # Local
+    if Path(folder).exists():
+        path = Path(folder) / ".harness" / "current_activity.json"
+        if not path.exists():
+            return {"activity": None}
+        try:
+            return {"activity": json.loads(path.read_text())}
+        except Exception:
+            return {"activity": None}
+    # Remote
+    machine = ag.get("machine")
+    if machine and not fleet_remote.is_local_machine(machine) and fleet_remote.fleet_ssh_available():
+        r = fleet_remote.read_remote_file(machine, f"{folder}/.harness/current_activity.json")
+        if r.get("ok") and r.get("content"):
+            import re as _re
+            content = _re.sub(r"\x1b\[[0-9;]*m", "", r["content"])
+            content = _re.sub(r"^\[[^\]\n]+\]\s*\n?", "", content, flags=_re.MULTILINE).strip()
+            try:
+                return {"activity": json.loads(content)}
+            except Exception:
+                return {"activity": None}
+    return {"activity": None}
 
 
 @app.get("/api/agents/{agent_id}/changes")
