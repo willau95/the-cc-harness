@@ -19,6 +19,7 @@ import { BackLink } from "@/components/BackLink";
 import { AgentLiveView } from "@/components/AgentLiveView";
 import { AgentChanges } from "@/components/AgentChanges";
 import { PageTabBar } from "@/components/PageTabBar";
+import { Tabs } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { timeAgo } from "@/lib/timeAgo";
 import { deriveAgentStatus } from "@/lib/status-colors";
@@ -143,8 +144,9 @@ const TABS = [
 
 function AgentDetailTabs({ agentId, data }: { agentId: string; data: AgentDetailT }) {
   const [tab, setTab] = useState<TabKey>("live");
+  // PageTabBar wraps shadcn's TabsList, which requires a Tabs context parent.
   return (
-    <div className="space-y-4">
+    <Tabs value={tab} onValueChange={(v) => setTab(v as TabKey)} className="space-y-4">
       <PageTabBar
         items={TABS}
         value={tab}
@@ -154,7 +156,7 @@ function AgentDetailTabs({ agentId, data }: { agentId: string; data: AgentDetail
       {tab === "changes" && <AgentChanges agentId={agentId} />}
       {tab === "overview" && <AgentOverview data={data} />}
       {tab === "events" && <AgentEvents data={data} agentId={agentId} />}
-    </div>
+    </Tabs>
   );
 }
 
