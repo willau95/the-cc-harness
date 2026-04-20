@@ -425,10 +425,57 @@ def api_agent(agent_id: str) -> dict:
     ag = registry.find(agent_id)
     if not ag:
         return JSONResponse({"error": "not_found"}, status_code=404)
-    alive = _alive_for(ag)
-    ag = {**ag, "paused": _paused_for(ag), "process_alive": alive}
+
+    # Cross-machine heartbeat + PID probe — if the agent lives on a peer,
+    # its heartbeat file is on the peer's disk. Same logic as /api/fleet.
     last = heartbeat.last_beat(agent_id)
-    stale = heartbeat.stale(agent_id)
+    alive = _alive_for(ag)
+    if (last is None or alive is None) and ag.get("machine") and not fleet_remote.is_local_machine(ag.get("machine")):
+        if fleet_remote.fleet_ssh_available():
+            machine = ag["machine"]
+            folder = ag.get("folder") or ""
+            cmd = (
+                f'echo "BEAT:$(tail -1 $HOME/.harness/heartbeats/{agent_id}.jsonl 2>/dev/null)"; '
+                f'echo PID:$(if [ -f "{folder}/.harness/session.pid" ]; then '
+                f'p=$(cat "{folder}/.harness/session.pid"); '
+                f'if kill -0 "$p" 2>/dev/null; then echo alive; else echo dead; fi; '
+                f'else echo unknown; fi)'
+            )
+            r = fleet_remote.exec_remote(machine, cmd, timeout=6)
+            if r.get("ok"):
+                import re as _re
+                import json as _json
+                text = _re.sub(r"\x1b\[[0-9;]*m", "", r.get("stdout") or "")
+                text = _re.sub(r"^\[[^\]\n]+\]\s*\n?", "", text, flags=_re.MULTILINE)
+                for line in text.splitlines():
+                    line = line.strip()
+                    if line.startswith("BEAT:"):
+                        raw = line[5:].strip()
+                        if raw:
+                            try:
+                                last = _json.loads(raw).get("ts") or last
+                            except _json.JSONDecodeError:
+                                pass
+                    elif line.startswith("PID:"):
+                        state = line[4:].strip()
+                        if state == "alive":
+                            alive = True
+                        elif state == "dead":
+                            alive = False
+
+    # Re-compute staleness from the final last_beat
+    if last:
+        try:
+            from datetime import datetime, timezone, timedelta
+            dt = datetime.strptime(last, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            stale = (datetime.now(timezone.utc) - dt) > timedelta(
+                minutes=config.load_config().get("zombie_timeout_minutes", 30))
+        except Exception:
+            stale = heartbeat.stale(agent_id)
+    else:
+        stale = heartbeat.stale(agent_id)
+
+    ag = {**ag, "paused": _paused_for(ag), "process_alive": alive}
     if alive is False:
         stale = True
     # checkpoint for agents whose folder is accessible from this machine

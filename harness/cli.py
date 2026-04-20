@@ -301,7 +301,11 @@ def init(role, name, project_name):
     project.add_member(proj, ident["agent_id"], role)
 
     # First heartbeat
-    heartbeat.beat(ident["agent_id"], kind="init")
+    # Deliberately NOT heartbeating here. `harness init` is scaffold-time,
+    # not runtime — claude hasn't started yet. If we beat here, a freshly
+    # spawned agent looks "online" (green) in the fleet view even though no
+    # claude process exists. Better UX: show "pending" until SessionStart
+    # fires its own heartbeat.
 
     click.echo(f"✓ Agent {ident['agent_id']} initialized.")
     click.echo(f"  Role:     {role}")
