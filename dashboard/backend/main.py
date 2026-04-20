@@ -1262,10 +1262,39 @@ def api_chat_thread(agent_id: str, limit: int = 50) -> dict:
     else:
         inbox_lines = list(read_jsonl(mailbox.inbox_path(agent_id)))
         consumed = mailbox._load_consumed(agent_id)
-    # Outbox from this agent — reconstruct by reading other agents' inboxes
-    # where this agent is the sender. For v1 we approximate via events.
-    events = eventlog.for_agent_today(agent_id)
+    # Outbox from this agent — reconstruct via events (metadata only) +
+    # for cross-machine agents, fetch peer-local human@dashboard inbox which
+    # is where the agent's replies land (they call send_message --to human@dashboard).
+    if ag and machine and not fleet_remote.is_local_machine(machine) and fleet_remote.fleet_ssh_available():
+        # Pull events from peer for this agent
+        import re as _re2
+        import json as _json2
+        r = fleet_remote.exec_remote(
+            machine,
+            f"~/.local/bin/harness events dump-json --limit 200 --days 2 2>/dev/null",
+            timeout=8,
+        )
+        peer_events = []
+        if r.get("ok") and r.get("stdout"):
+            s = _re2.sub(r"\x1b\[[0-9;]*m", "", r["stdout"])
+            s = _re2.sub(r"\A\[[^\]\n]+\]\s*\n?", "", s)
+            jstart = s.find("[")
+            jend = s.rfind("]") + 1
+            if jstart >= 0 and jend > jstart:
+                try:
+                    peer_events = _json2.loads(s[jstart:jend])
+                except _json2.JSONDecodeError:
+                    pass
+        events = [e for e in peer_events if e.get("agent") == agent_id]
+        # Also pull human@dashboard inbox from peer (contains bodies of outbound)
+        human_inbox = fleet_remote.read_remote_jsonl(
+            machine, "~/.harness/mailboxes/human@dashboard/inbox.jsonl"
+        )
+    else:
+        events = eventlog.for_agent_today(agent_id)
+        human_inbox = list(read_jsonl(mailbox.inbox_path("human@dashboard")))
     outbox: list[dict] = []
+    # Events provide the full list of sends, even if body is elsewhere
     for e in events:
         if e.get("type") in ("sent_message", "sent_message_remote_fallback"):
             outbox.append({
@@ -1273,8 +1302,28 @@ def api_chat_thread(agent_id: str, limit: int = 50) -> dict:
                 "from": agent_id,
                 "to": e.get("to"),
                 "subject": e.get("subject"),
-                "body": "(outbound — stored in recipient's inbox)",
+                "body": None,  # fill in below from human_inbox if match
                 "created_at": e.get("ts"),
+                "direction": "outbound",
+            })
+    # For messages the agent sent TO human@dashboard, the body lives in the
+    # peer's mailboxes/human@dashboard/inbox.jsonl — match by msg_id.
+    by_id = {m.get("msg_id"): m for m in human_inbox if m.get("from") == agent_id}
+    for o in outbox:
+        if o.get("to") == "human@dashboard" and o.get("msg_id") in by_id:
+            o["body"] = by_id[o["msg_id"]].get("body")
+    # Also handle the case where events are missing but human_inbox has entries
+    # (shouldn't normally happen, but defensive)
+    seen_ids = {o["msg_id"] for o in outbox}
+    for m in human_inbox:
+        if m.get("from") == agent_id and m.get("msg_id") not in seen_ids:
+            outbox.append({
+                "msg_id": m.get("msg_id"),
+                "from": agent_id,
+                "to": "human@dashboard",
+                "subject": m.get("subject"),
+                "body": m.get("body"),
+                "created_at": m.get("created_at"),
                 "direction": "outbound",
             })
     # read/unread state: "consumed" msg_ids were seen by the agent (via

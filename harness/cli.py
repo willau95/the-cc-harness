@@ -404,6 +404,32 @@ def inbox(agent, limit):
         click.echo(f"- {m['msg_id']}  from {m['from']}  {m['subject']}")
 
 
+@cli.command()
+@click.option("--agent", default=None, help="Agent id; defaults to agent in cwd.")
+@click.option("--limit", default=20)
+def receive(agent, limit):
+    """Read new messages from the inbox and mark them consumed. Emits JSON
+    so the /inbox slash command can hand the result directly to claude."""
+    if not agent:
+        ident = identity.load_identity(Path.cwd())
+        if not ident:
+            click.echo(json.dumps({"ok": False, "error": "no agent in cwd"}))
+            sys.exit(1)
+        agent = ident["agent_id"]
+    msgs = mailbox.receive(agent, limit=limit, wrap_untrusted=True)
+    click.echo(json.dumps({
+        "ok": True,
+        "count": len(msgs),
+        "messages": [{
+            "msg_id": m.get("msg_id"),
+            "from": m.get("from"),
+            "subject": m.get("subject"),
+            "body": m.get("body_wrapped") or m.get("body"),
+            "created_at": m.get("created_at"),
+        } for m in msgs],
+    }, ensure_ascii=False))
+
+
 @cli.group(name="events")
 def events_cmd():
     """Event log inspection."""
