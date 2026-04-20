@@ -728,6 +728,75 @@ def api_machine_install_harness(machine: str) -> dict:
     }
 
 
+@app.get("/api/fs/parent-dirs")
+def api_fs_parent_dirs(machine: str | None = None) -> dict:
+    """Suggest candidate parent directories where an agent folder can live.
+    Used by the Spawn dialog to build a dropdown instead of free-text paths
+    (typos in absolute paths caused confusion).
+
+    Returns existing dirs only — no promise to create. The folder name
+    (project name) the user types becomes a subdirectory under the parent."""
+    cache_key = f"fs-parents::{machine or '__local__'}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    candidates = [
+        "$HOME/harness-test",
+        "$HOME/Desktop",
+        "$HOME/Documents",
+        "$HOME/projects",
+        "$HOME/workspace",
+        "$HOME/work",
+        "$HOME/dev",
+        "$HOME",  # always last-resort
+    ]
+    probe = "; ".join(
+        f'd={c}; if [ -d "$d" ]; then echo "EXISTS:$d"; fi' for c in candidates
+    )
+    # We also want to know the resolved home path for display ("~/…")
+    probe = f'echo "HOME:$HOME"; {probe}'
+
+    is_local = not machine or machine == "__local__"
+    if is_local:
+        import subprocess
+        try:
+            r = subprocess.run(["bash", "-lc", probe], capture_output=True, text=True, timeout=4)
+            out = r.stdout
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+    else:
+        if not fleet_remote.fleet_ssh_available():
+            return JSONResponse({"error": "fleet-ssh not available"}, status_code=400)
+        r = fleet_remote.exec_remote(machine, probe, timeout=6)
+        if not r.get("ok"):
+            return JSONResponse({"error": r.get("stderr") or r.get("error")}, status_code=502)
+        import re as _re
+        out = _re.sub(r"\A\[[^\]\n]+\]\s*\n?", "",
+                      _re.sub(r"\x1b\[[0-9;]*m", "", r.get("stdout", "")))
+
+    home = ""
+    parents: list[dict] = []
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith("HOME:"):
+            home = line[5:]
+        elif line.startswith("EXISTS:"):
+            full = line[7:]
+            display = full
+            if home and full.startswith(home):
+                display = "~" + full[len(home):]
+            parents.append({"path": full, "display": display})
+
+    result = {
+        "machine": machine or "__local__",
+        "home": home,
+        "parents": parents,
+    }
+    _cache_put(cache_key, result)
+    return result
+
+
 @app.post("/api/machines/{machine}/bootstrap")
 def api_machine_bootstrap(machine: str) -> dict:
     """Write peers.yaml + fleet-machines.json onto the peer so its mailbox

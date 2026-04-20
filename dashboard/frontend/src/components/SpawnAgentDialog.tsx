@@ -1,8 +1,9 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fleetApi } from "@/api/fleet";
 import { rolesApi } from "@/api/roles";
 import { machinesApi } from "@/api/machines";
+import { fsApi } from "@/api/fs";
 import { queryKeys } from "@/lib/queryKeys";
 import { useDialogs } from "@/context/DialogContext";
 import { useToast } from "@/context/ToastContext";
@@ -13,6 +14,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
+// Project name is what becomes the folder basename. Strict: lowercase,
+// alphanumeric, dash/underscore. No slashes or dots. Prevents a typo like
+// ".." from escaping the chosen parent.
+const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+function isValidProjectName(n: string): boolean {
+  return NAME_RE.test(n.trim());
+}
 
 export function SpawnAgentDialog() {
   const { spawnOpen, closeSpawn } = useDialogs();
@@ -37,34 +47,72 @@ export function SpawnAgentDialog() {
 
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
-  const [folder, setFolder] = useState("");
+  const [projectName, setProjectName] = useState("");
+  const [parent, setParent] = useState<string>("");
   const [initialPrompt, setInitialPrompt] = useState("");
   const [machine, setMachine] = useState<string>("__local__");
 
+  // Fetch parent-dir candidates for the selected machine
+  const { data: parentDirs, isLoading: parentsLoading } = useQuery({
+    queryKey: ["fs", "parent-dirs", machine],
+    queryFn: () => fsApi.parentDirs(machine),
+    enabled: spawnOpen,
+    staleTime: 30_000,
+  });
+
+  // When candidates load, auto-pick the first one (harness-test if present, else home)
+  useEffect(() => {
+    if (!parentDirs || parent) return;
+    const best =
+      parentDirs.parents.find((p) => p.path.endsWith("/harness-test")) ??
+      parentDirs.parents.find((p) => p.path.endsWith("/Desktop")) ??
+      parentDirs.parents[0];
+    if (best) setParent(best.path);
+  }, [parentDirs, parent]);
+
   useEffect(() => {
     if (!spawnOpen) {
-      // reset on close
       setName("");
       setRole("");
-      setFolder("");
+      setProjectName("");
+      setParent("");
       setInitialPrompt("");
       setMachine("__local__");
     }
   }, [spawnOpen]);
+
+  // Reset parent when user switches machine — candidates on each host differ
+  useEffect(() => {
+    setParent("");
+  }, [machine]);
+
+  // Auto-sync project name → agent name if user hasn't typed one yet
+  useEffect(() => {
+    if (projectName && !name) setName(projectName);
+  }, [projectName, name]);
+
+  const fullFolder = useMemo(() => {
+    if (!parent || !projectName.trim()) return "";
+    return `${parent}/${projectName.trim()}`;
+  }, [parent, projectName]);
+
+  const nameValid = isValidProjectName(projectName);
+  const ready = Boolean(name.trim() && role.trim() && parent && nameValid);
 
   const spawn = useMutation({
     mutationFn: () =>
       fleetApi.spawn({
         name: name.trim(),
         role: role.trim(),
-        folder: folder.trim(),
+        folder: fullFolder,
         initial_prompt: initialPrompt.trim() || undefined,
         machine: machine && machine !== "__local__" ? machine : undefined,
       }),
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: queryKeys.fleet });
       qc.invalidateQueries({ queryKey: queryKeys.stats });
-      pushToast(`Spawned ${res.agent_id ?? "agent"}`, "success");
+      qc.invalidateQueries({ queryKey: queryKeys.machines });
+      pushToast(`Spawned ${res.agent_id ?? "agent"} · ${fullFolder}`, "success");
       closeSpawn();
     },
     onError: (err: unknown) => {
@@ -75,7 +123,7 @@ export function SpawnAgentDialog() {
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!name.trim() || !role.trim() || !folder.trim()) return;
+    if (!ready) return;
     spawn.mutate();
   }
 
@@ -86,20 +134,41 @@ export function SpawnAgentDialog() {
           <DialogHeader>
             <DialogTitle>Spawn agent</DialogTitle>
             <DialogDescription>
-              Start a new harness-managed process against a project folder.
+              Creates <code>{"<parent>/<project-name>"}</code> on the chosen Mac with the harness scaffolding, then you <code>cd</code> + <code>claude</code>.
             </DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-3">
             <div className="grid gap-1.5">
-              <Label htmlFor="spawn-name">Name</Label>
-              <Input
-                id="spawn-name"
-                placeholder="e.g. claude-local-42"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-              />
+              <Label htmlFor="spawn-machine">Machine</Label>
+              <Select value={machine} onValueChange={setMachine}>
+                <SelectTrigger id="spawn-machine" className="w-full">
+                  <SelectValue placeholder="This machine (local)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__local__">This machine (local)</SelectItem>
+                  {machines
+                    .filter((m) => !m.is_local)
+                    .map((m) => (
+                      <SelectItem key={m.name} value={m.name}>
+                        {m.name}
+                        {m.user && m.ip ? ` · ${m.user}@${m.ip}` : ""}
+                        {m.harness_installed === false ? " · no harness" : ""}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+              {machinesData && !machinesData.fleet_ssh_available && machine !== "__local__" && (
+                <p className="text-xs text-yellow-600 dark:text-yellow-400">
+                  Remote spawn requires fleet SSH to be available.
+                </p>
+              )}
+              {machine !== "__local__" &&
+                machines.find((m) => m.name === machine)?.harness_installed === false && (
+                <p className="text-xs text-yellow-600 dark:text-yellow-400">
+                  This peer has no harness installed. Install it from the Machines page first.
+                </p>
+              )}
             </div>
 
             <div className="grid gap-1.5">
@@ -129,39 +198,59 @@ export function SpawnAgentDialog() {
             </div>
 
             <div className="grid gap-1.5">
-              <Label htmlFor="spawn-folder">Folder</Label>
-              <Input
-                id="spawn-folder"
-                placeholder="/absolute/path/to/project"
-                value={folder}
-                onChange={(e) => setFolder(e.target.value)}
-                required
-              />
+              <Label htmlFor="spawn-parent">Parent directory</Label>
+              <Select value={parent} onValueChange={setParent} disabled={parentsLoading}>
+                <SelectTrigger id="spawn-parent" className="w-full">
+                  <SelectValue placeholder={parentsLoading ? "Loading…" : "Pick a parent"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {(parentDirs?.parents ?? []).map((p) => (
+                    <SelectItem key={p.path} value={p.path}>
+                      <span className="font-mono text-xs">{p.display}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {parentDirs && parentDirs.parents.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No common directories found on this machine. Only home is available —
+                  make a directory manually (e.g. <code>mkdir ~/harness-test</code>) and refresh.
+                </p>
+              )}
             </div>
 
             <div className="grid gap-1.5">
-              <Label htmlFor="spawn-machine">Machine</Label>
-              <Select value={machine} onValueChange={setMachine}>
-                <SelectTrigger id="spawn-machine" className="w-full">
-                  <SelectValue placeholder="This machine (local)" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__local__">This machine (local)</SelectItem>
-                  {machines
-                    .filter((m) => !m.is_local)
-                    .map((m) => (
-                      <SelectItem key={m.name} value={m.name}>
-                        {m.name}
-                        {m.user && m.ip ? ` · ${m.user}@${m.ip}` : ""}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-              {machinesData && !machinesData.fleet_ssh_available && machine !== "__local__" && (
-                <p className="text-xs text-yellow-600 dark:text-yellow-400">
-                  Remote spawn requires fleet SSH to be available.
+              <Label htmlFor="spawn-project-name">Project name (folder)</Label>
+              <Input
+                id="spawn-project-name"
+                placeholder="e.g. gamedev1"
+                value={projectName}
+                onChange={(e) => setProjectName(e.target.value.toLowerCase())}
+                required
+                pattern={NAME_RE.source}
+                autoComplete="off"
+              />
+              {projectName && !nameValid && (
+                <p className="text-xs text-destructive">
+                  Use lowercase letters, digits, dashes or underscores. No slashes, dots or spaces.
                 </p>
               )}
+              {fullFolder && nameValid && (
+                <p className="text-xs text-muted-foreground font-mono break-all">
+                  Will create: <span className="text-foreground">{fullFolder}</span>
+                </p>
+              )}
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label htmlFor="spawn-name">Agent name <span className="text-muted-foreground font-normal">(shown in fleet)</span></Label>
+              <Input
+                id="spawn-name"
+                placeholder="defaults to project name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+              />
             </div>
 
             <div className="grid gap-1.5">
@@ -180,7 +269,7 @@ export function SpawnAgentDialog() {
             <Button type="button" variant="ghost" onClick={closeSpawn} disabled={spawn.isPending}>
               Cancel
             </Button>
-            <Button type="submit" disabled={spawn.isPending || !name.trim() || !role.trim() || !folder.trim()}>
+            <Button type="submit" disabled={spawn.isPending || !ready}>
               {spawn.isPending ? "Spawning…" : "Spawn"}
             </Button>
           </DialogFooter>
