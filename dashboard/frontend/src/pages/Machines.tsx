@@ -269,6 +269,20 @@ function MachineCard({
           <span>SSH works but harness is missing. Click <b>Install</b> below to clone + run <code>./install.sh</code> over fleet-ssh.</span>
         </div>
       )}
+      {!local && m.claude_logged_in === false && (
+        <div className="text-xs rounded border border-red-500/40 bg-red-500/10 px-2 py-1.5 space-y-1.5">
+          <div className="flex items-start gap-1.5 text-red-500 dark:text-red-400 font-medium">
+            <ShieldAlert className="h-3 w-3 shrink-0 mt-0.5" />
+            <span>claude not logged in on this Mac</span>
+          </div>
+          <div className="text-muted-foreground">
+            Every agent spawned on this peer will fail with <code>Invalid API key</code> or
+            <code>ConnectionRefused</code> until you run <code className="px-1 bg-muted/60 rounded">claude login</code> on it.
+            OAuth requires a browser, so it must be done physically / via Screen Sharing —
+            cannot be delegated from the dashboard.
+          </div>
+        </div>
+      )}
       {typeof m.anthropic_base_url_issue === "string" && m.anthropic_base_url_issue && (
         <div className="text-xs rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 space-y-1.5">
           <div className="flex items-start gap-1.5 text-amber-600 dark:text-amber-400 font-medium">

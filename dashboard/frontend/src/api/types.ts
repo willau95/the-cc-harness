@@ -223,6 +223,7 @@ export interface Machine {
   agent_count?: number;
   offline_reason?: string | null;
   anthropic_base_url_issue?: string | null;
+  claude_logged_in?: boolean | null;
   [key: string]: unknown;
 }
 

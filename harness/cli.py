@@ -296,6 +296,17 @@ def init(role, name, project_name):
         click.echo("      unset ANTHROPIC_BASE_URL")
         click.echo("      sed -i.bak '/ANTHROPIC_BASE_URL/d' ~/.zshrc")
 
+    # Warn if claude login hasn't been completed — no credentials.json means
+    # every `claude` invocation will fail with 'Invalid API key'.
+    cred_path = Path.home() / ".claude" / "credentials.json"
+    if not cred_path.exists():
+        click.echo(
+            "\n[!] claude is not logged in on this Mac (~/.claude/credentials.json missing).\n"
+            "    Every agent you spawn will fail with 'Invalid API key' until you run:\n"
+            "      claude login\n"
+            "    Complete the browser OAuth with your Claude subscription account."
+        )
+
     click.echo(f"\nNext: run `claude` to start.")
 
 

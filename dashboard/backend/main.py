@@ -771,9 +771,9 @@ def api_machines() -> dict:
                    if (a.get("machine") or "").lower() == name)
 
     def _probe(m: dict) -> dict:
-        """One SSH hop that checks reachability + harness presence + common
-        misconfigurations (ANTHROPIC_BASE_URL leftover that breaks claude).
-        File-existence for harness so old binaries still count."""
+        """One SSH hop checking: reachability, harness presence, and common
+        setup problems (ANTHROPIC_BASE_URL leftover from cc-switch/openclaw;
+        missing claude OAuth credentials so user never completed `claude login`)."""
         start = time.time()
         r = fleet_remote.exec_remote(
             m["name"],
@@ -785,7 +785,11 @@ def api_machines() -> dict:
             # claude-code-router leftover that silently breaks claude)
             "echo BASE_URL_$(grep -h '^export ANTHROPIC_BASE_URL' "
             "  $HOME/.zshrc $HOME/.zprofile $HOME/.bashrc $HOME/.bash_profile "
-            "  2>/dev/null | head -1 || echo clean)",
+            "  2>/dev/null | head -1 || echo clean); "
+            # Check claude is logged in — without credentials.json every spawned
+            # agent fails with 'Invalid API key' or 'ConnectionRefused'
+            "echo CLAUDE_LOGIN_$(test -f $HOME/.claude/credentials.json "
+            "  && echo yes || echo missing)",
             timeout=6,
         )
         latency_ms = int((time.time() - start) * 1000)
@@ -798,6 +802,7 @@ def api_machines() -> dict:
         harness_version = None
         harness_ok = False
         base_url_issue = None
+        claude_logged_in: bool | None = None
         for line in out.splitlines():
             line = line.strip()
             if line.startswith("HARNESS_"):
@@ -811,10 +816,14 @@ def api_machines() -> dict:
                 payload = line[len("BASE_URL_"):]
                 if payload and payload != "clean":
                     base_url_issue = payload  # the offending export line
+            elif line.startswith("CLAUDE_LOGIN_"):
+                payload = line[len("CLAUDE_LOGIN_"):]
+                claude_logged_in = (payload == "yes")
         return {"online": online, "latency_ms": latency_ms,
                 "harness_installed": harness_ok and online,
                 "harness_version": harness_version if harness_ok else None,
-                "anthropic_base_url_issue": base_url_issue}
+                "anthropic_base_url_issue": base_url_issue,
+                "claude_logged_in": claude_logged_in}
 
     enriched: list[dict] = []
     probes: dict[str, dict] = {}
