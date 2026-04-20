@@ -101,10 +101,15 @@ export function deriveAgentStatus(ag: {
   process_alive?: boolean | null;
   last_beat?: string | null;
 }): string {
-  if (ag.process_alive === false) return "offline";
   if (ag.paused) return "paused";
-  // Never-beat: registered but claude hasn't been started yet. Blue pending,
-  // not red stale — nothing's wrong, user just hasn't launched claude.
+  // Fresh heartbeat overrides a negative PID check. This is the case for
+  // `claude --print` driven agents (captain orchestration): PID exits after
+  // each invocation but heartbeat is current; they're clearly alive.
+  const beatFresh = ag.last_beat
+    ? (Date.now() - new Date(ag.last_beat).getTime()) < 5 * 60 * 1000
+    : false;
+  if (ag.process_alive === false && !beatFresh) return "offline";
+  // Never-beat: registered but claude hasn't been started yet.
   if (!ag.last_beat && ag.process_alive !== true) return "pending";
   if (ag.stale) {
     return ag.process_alive === true ? "idle" : "stale";
