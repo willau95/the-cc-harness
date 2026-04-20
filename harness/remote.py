@@ -145,12 +145,12 @@ def read_remote_jsonl(machine: str, remote_path: str) -> list[dict]:
 def push_message(machine: str, agent_id: str, envelope: dict) -> dict:
     """Deliver an envelope to a remote agent's inbox.
 
-    Path must match `mailbox.inbox_path` on the receiving side: singular
-    `mailbox` — historical typo had plural `mailboxes` here and every
-    cross-machine message silently orphaned for ages before we noticed.
+    Path must match `config.mailbox_dir()` on the receiving side, which is
+    `~/.harness/mailboxes/<agent_id>/` (plural). Earlier fix incorrectly
+    "unified" to singular and broke the receive path.
     """
     line = json.dumps(envelope, ensure_ascii=False)
-    remote_path = f"~/.harness/mailbox/{agent_id}/inbox.jsonl"
+    remote_path = f"~/.harness/mailboxes/{agent_id}/inbox.jsonl"
     return append_remote_jsonl(machine, remote_path, line)
 
 

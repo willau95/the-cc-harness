@@ -1250,12 +1250,12 @@ def api_chat_thread(agent_id: str, limit: int = 50) -> dict:
     machine = (ag or {}).get("machine")
     consumed: set[str] = set()
     if ag and machine and not fleet_remote.is_local_machine(machine) and fleet_remote.fleet_ssh_available():
+        # Plural "mailboxes" — matches config.mailbox_dir() on receiving side.
         inbox_lines = fleet_remote.read_remote_jsonl(
-            machine, f"~/.harness/mailbox/{agent_id}/inbox.jsonl"
+            machine, f"~/.harness/mailboxes/{agent_id}/inbox.jsonl"
         )
-        # Also pull the peer's consumed log so we know read/unread state
         consumed_result = fleet_remote.read_remote_file(
-            machine, f"~/.harness/mailbox/{agent_id}/inbox.consumed"
+            machine, f"~/.harness/mailboxes/{agent_id}/inbox.consumed"
         )
         if consumed_result.get("ok") and consumed_result.get("content"):
             consumed = {line.strip() for line in consumed_result["content"].splitlines() if line.strip()}
