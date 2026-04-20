@@ -393,6 +393,22 @@ def arsenal_dump_json(limit):
     click.echo(json.dumps(out, ensure_ascii=False))
 
 
+@arsenal_cmd.command(name="set-trust")
+@click.argument("slug")
+@click.argument("new_trust")
+@click.option("--by", default="human@dashboard", help="Who's changing the trust")
+def arsenal_set_trust(slug, new_trust, by):
+    """Update the trust tier of an arsenal item. Used by dashboard
+    for cross-machine trust routing (owning peer runs this via fleet-ssh)."""
+    from harness import arsenal as arsenal_mod
+    # Verify item exists locally before updating
+    if not arsenal_mod.get(slug):
+        click.echo(json.dumps({"error": "not_found", "slug": slug}))
+        sys.exit(1)
+    arsenal_mod.set_trust(slug, new_trust, by=by)
+    click.echo(json.dumps({"ok": True, "slug": slug, "trust": new_trust}))
+
+
 @arsenal_cmd.command(name="get")
 @click.argument("slug")
 @click.option("--json", "as_json", is_flag=True, help="Emit full item as JSON (used by dashboard for cross-machine fetch)")

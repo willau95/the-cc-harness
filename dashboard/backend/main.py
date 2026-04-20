@@ -364,8 +364,56 @@ def api_arsenal_get(slug: str) -> dict:
 
 @app.post("/api/arsenal/{slug}/trust")
 def api_arsenal_set_trust(slug: str, req: ArsenalTrustRequest) -> dict:
-    arsenal.set_trust(slug, req.trust, by="human@dashboard")
-    return {"ok": True, "slug": slug, "trust": req.trust}
+    # Local path: item lives on this machine
+    if arsenal.get(slug):
+        arsenal.set_trust(slug, req.trust, by="human@dashboard")
+        # Bust caches so the UI re-fetches fresh data
+        _CACHE.pop("arsenal-remote::::100", None)
+        for k in list(_CACHE.keys()):
+            if k.startswith("arsenal-"):
+                _CACHE.pop(k, None)
+        return {"ok": True, "slug": slug, "trust": req.trust, "machine": None}
+    # Remote path: route to the owning peer via fleet-ssh
+    if fleet_remote.fleet_ssh_available():
+        import re as _re
+        for m in fleet_remote.all_machines_including_local():
+            if m.get("is_local") or m.get("synthetic") or _is_offline(m["name"]):
+                continue
+            try:
+                # First check whether this peer owns the slug (cheap existence check)
+                probe = fleet_remote.exec_remote(
+                    m["name"],
+                    f"~/.local/bin/harness arsenal get {slug} --json 2>/dev/null | head -c 1",
+                    timeout=6,
+                )
+                if not (probe.get("ok") and probe.get("stdout", "").strip().startswith(("{", "[Seas", "["))):
+                    # Second-level probe: try markdown form (old CLI)
+                    probe2 = fleet_remote.exec_remote(
+                        m["name"],
+                        f"~/.local/bin/harness arsenal get {slug} 2>&1 | head -2",
+                        timeout=6,
+                    )
+                    body = _re.sub(r"\x1b\[[0-9;]*m", "", probe2.get("stdout", ""))
+                    body = _re.sub(r"\A\[[^\]\n]+\]\s*\n?", "", body)
+                    if "(not found)" in body or not body.strip().startswith("# "):
+                        continue
+                # Owner found — issue the update
+                r = fleet_remote.exec_remote(
+                    m["name"],
+                    f"~/.local/bin/harness arsenal set-trust {slug} {req.trust} --by human@dashboard",
+                    timeout=8,
+                )
+                if not (r.get("ok") and r.get("stdout")):
+                    continue
+                # Bust caches so next /api/arsenal/{slug} sees the new trust
+                for k in list(_CACHE.keys()):
+                    if k.startswith("arsenal-"):
+                        _CACHE.pop(k, None)
+                return {"ok": True, "slug": slug, "trust": req.trust, "machine": m["name"]}
+            except Exception:
+                _mark_offline(m["name"])
+                continue
+    return JSONResponse({"error": "not_found_on_any_peer", "slug": slug}, status_code=404)
 
 
 @app.get("/api/projects")
