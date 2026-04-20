@@ -71,7 +71,12 @@ def _rewrite_tool_scripts(skill_dirs: list) -> None:
                 pass
 
 
+__version__ = "0.2.0"
+
+
 @click.group()
+@click.version_option(__version__, "-V", "--version", prog_name="harness",
+                      message="%(prog)s %(version)s")
 def cli():
     """Claude Harness — fleet layer on top of Claude Code."""
     pass

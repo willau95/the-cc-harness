@@ -214,6 +214,12 @@ export interface Machine {
   user?: string | null;
   ip?: string | null;
   is_local?: boolean;
+  online?: boolean;
+  latency_ms?: number | null;
+  harness_installed?: boolean;
+  harness_version?: string | null;
+  agent_count?: number;
+  offline_reason?: string | null;
   [key: string]: unknown;
 }
 

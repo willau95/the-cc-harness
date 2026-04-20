@@ -7,6 +7,7 @@ import { PageSkeleton } from "@/components/PageSkeleton";
 // shared primitives. Each route loads its own chunk on first visit.
 const DashboardPage      = lazy(() => import("@/pages/Dashboard").then(m => ({ default: m.DashboardPage })));
 const FleetPage          = lazy(() => import("@/pages/Fleet").then(m => ({ default: m.FleetPage })));
+const MachinesPage       = lazy(() => import("@/pages/Machines").then(m => ({ default: m.MachinesPage })));
 const AgentDetailPage    = lazy(() => import("@/pages/AgentDetail").then(m => ({ default: m.AgentDetailPage })));
 const EventsPage         = lazy(() => import("@/pages/Events").then(m => ({ default: m.EventsPage })));
 const ProjectsPage       = lazy(() => import("@/pages/Projects").then(m => ({ default: m.ProjectsPage })));
@@ -28,6 +29,7 @@ export function App() {
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/fleet" element={<FleetPage />} />
           <Route path="/fleet/:tab" element={<FleetPage />} />
+          <Route path="/machines" element={<MachinesPage />} />
           <Route path="/agents/:agentId" element={<AgentDetailPage />} />
           <Route path="/events" element={<EventsPage />} />
           <Route path="/projects" element={<ProjectsPage />} />

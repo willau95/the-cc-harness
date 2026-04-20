@@ -525,10 +525,128 @@ def api_spawn(req: SpawnRequest) -> dict:
 
 @app.get("/api/machines")
 def api_machines() -> dict:
-    """List machines known in the fleet (from mac-fleet-control registry)."""
+    """List machines known in the fleet, enriched with reachability +
+    harness version + agent count. Expensive probes run in parallel."""
+    cached = _cache_get("machines-enriched")
+    if cached is not None:
+        return cached
+
     machines = fleet_remote.all_machines_including_local()
-    return {"count": len(machines), "machines": machines,
-            "fleet_ssh_available": fleet_remote.fleet_ssh_available()}
+
+    # Count agents per machine from both local + aggregated remote registries
+    local_agents = registry.live_agents()
+    local_count = len(local_agents)
+    remote_agents: list[dict] = []
+    if fleet_remote.fleet_ssh_available():
+        remote_cached = _cache_get("fleet-all-remote")
+        if remote_cached is not None:
+            remote_agents = remote_cached
+
+    # Dedupe by agent_id — broadcast means the same agent appears in many peers' registries
+    seen: set[str] = set()
+    deduped_remote: list[dict] = []
+    for a in remote_agents:
+        aid = a.get("agent_id")
+        if aid and aid not in seen:
+            seen.add(aid)
+            deduped_remote.append(a)
+
+    def _agent_count_for(m: dict) -> int:
+        if m.get("is_local"):
+            return local_count
+        name = (m.get("name") or "").lower()
+        return sum(1 for a in deduped_remote
+                   if (a.get("machine") or "").lower() == name)
+
+    def _probe(m: dict) -> dict:
+        """One SSH hop that checks reachability + harness presence in one shot.
+        Uses file-existence (not --version) so old harness binaries also count."""
+        start = time.time()
+        r = fleet_remote.exec_remote(
+            m["name"],
+            "test -x $HOME/.local/bin/harness && "
+            "($HOME/.local/bin/harness --version 2>/dev/null || echo 'harness installed') "
+            "|| echo 'harness missing'",
+            timeout=6,
+        )
+        latency_ms = int((time.time() - start) * 1000)
+        online = bool(r.get("ok"))
+        out = (r.get("stdout") or "").strip()
+        import re as _re
+        out = _re.sub(r"\x1b\[[0-9;]*m", "", out)
+        out = _re.sub(r"\A\[[^\]\n]+\]\s*\n?", "", out).strip()
+        harness_ok = online and "missing" not in out and bool(out)
+        version = out if harness_ok else None
+        return {"online": online, "latency_ms": latency_ms,
+                "harness_installed": harness_ok, "harness_version": version}
+
+    enriched: list[dict] = []
+    probes: dict[str, dict] = {}
+    if fleet_remote.fleet_ssh_available():
+        # Fan out SSH probes in parallel
+        targets = [m for m in machines if not m.get("is_local") and not m.get("synthetic") and not _is_offline(m["name"])]
+        futures = {_REMOTE_POOL.submit(_probe, m): m for m in targets}
+        for fut in as_completed(futures, timeout=12):
+            m = futures[fut]
+            try:
+                probes[m["name"]] = fut.result()
+            except Exception:
+                probes[m["name"]] = {"online": False, "latency_ms": None,
+                                     "harness_installed": False, "harness_version": None}
+                _mark_offline(m["name"])
+
+    for m in machines:
+        info = {
+            **m,
+            "agent_count": _agent_count_for(m),
+            "online": True if m.get("is_local") else False,
+            "latency_ms": 0 if m.get("is_local") else None,
+            "harness_installed": True if m.get("is_local") else False,
+            "harness_version": "local" if m.get("is_local") else None,
+        }
+        if m.get("name") in probes:
+            info.update(probes[m["name"]])
+        if _is_offline(m.get("name") or ""):
+            info["online"] = False
+            info["offline_reason"] = "marked offline by recent failure"
+        enriched.append(info)
+
+    result = {
+        "count": len(enriched),
+        "machines": enriched,
+        "fleet_ssh_available": fleet_remote.fleet_ssh_available(),
+    }
+    _cache_put("machines-enriched", result)
+    return result
+
+
+@app.post("/api/machines/{machine}/ping")
+def api_machine_ping(machine: str) -> dict:
+    """Force a fresh connectivity test for one machine (bypasses cache)."""
+    if not fleet_remote.fleet_ssh_available():
+        return JSONResponse({"ok": False, "error": "fleet-ssh not available"}, status_code=400)
+    start = time.time()
+    r = fleet_remote.exec_remote(machine, "echo harness-ping-ok", timeout=6)
+    latency_ms = int((time.time() - start) * 1000)
+    _CACHE.pop("machines-enriched", None)
+    ok = bool(r.get("ok")) and "harness-ping-ok" in (r.get("stdout") or "")
+    if not ok:
+        _mark_offline(machine)
+    else:
+        _OFFLINE.pop(machine, None)
+    return {"ok": ok, "machine": machine, "latency_ms": latency_ms,
+            "stdout": r.get("stdout", "")[:200], "stderr": r.get("stderr", "")[:200]}
+
+
+@app.post("/api/machines/{machine}/bootstrap")
+def api_machine_bootstrap(machine: str) -> dict:
+    """Write peers.yaml + fleet-machines.json onto the peer so its mailbox
+    can reach the rest of the fleet. Safe to call repeatedly."""
+    if not fleet_remote.fleet_ssh_available():
+        return JSONResponse({"ok": False, "error": "fleet-ssh not available"}, status_code=400)
+    result = fleet_remote.bootstrap_peer_machine(machine)
+    _CACHE.pop("machines-enriched", None)
+    return result
 
 
 @app.get("/api/fleet-all")
