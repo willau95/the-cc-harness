@@ -138,22 +138,48 @@ def init(role, name, project_name):
         ident = identity.create_identity(folder, role=role, slug=slug)
     registry.register(ident)
 
-    # Assemble CLAUDE.md: role template + hint pointer
+    # Assemble the harness section of CLAUDE.md. If the folder already has
+    # its own CLAUDE.md (adopted existing project), we APPEND our section below
+    # the user's content, wrapped in markers so future upgrades can find &
+    # replace just our block without touching anything the user wrote.
     base_pre = (REPO_ROOT / "roles" / "_base-preamble.md").read_text()
     role_body = role_file.read_text()
-    # Strip frontmatter from role template
     if role_body.startswith("---"):
         parts = role_body.split("---", 2)
         if len(parts) >= 3:
             role_body = parts[2].lstrip()
-    claude_md = (
+
+    HARNESS_BEGIN = "<!-- BEGIN harness agent preamble — auto-generated -->"
+    HARNESS_END = "<!-- END harness agent preamble -->"
+    harness_block = (
+        f"{HARNESS_BEGIN}\n"
         f"# Agent: {ident['agent_id']}\n"
         f"# Role: {role}\n\n"
         + base_pre
         + "\n\n"
         + role_body
+        + f"\n{HARNESS_END}\n"
     )
-    (folder / "CLAUDE.md").write_text(claude_md)
+
+    claude_md_path = folder / "CLAUDE.md"
+    if claude_md_path.exists():
+        existing = claude_md_path.read_text()
+        import re as _re
+        # Replace our previous block if present, else append
+        pattern = _re.compile(
+            _re.escape(HARNESS_BEGIN) + r".*?" + _re.escape(HARNESS_END) + r"\n?",
+            _re.DOTALL,
+        )
+        if pattern.search(existing):
+            new_content = pattern.sub(harness_block, existing)
+            click.echo("  (updated harness block in existing CLAUDE.md; your content preserved)")
+        else:
+            sep = "" if existing.endswith("\n\n") else ("\n" if existing.endswith("\n") else "\n\n")
+            new_content = existing + sep + harness_block
+            click.echo("  (appended harness block to existing CLAUDE.md; your content preserved)")
+        claude_md_path.write_text(new_content)
+    else:
+        claude_md_path.write_text(harness_block)
 
     # Install harness skill into .claude/skills/
     skill_src = REPO_ROOT / "skill" / "harness"
