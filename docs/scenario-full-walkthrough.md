@@ -81,6 +81,21 @@ harness dashboard       # → http://localhost:9999
 
 **期望**：浏览器打开 dashboard，左侧 sidebar 有 Dashboard / Machines / Fleet / Chat / Events / Arsenal / Tasks / Proposals / Projects。当前是空的（0 agents、0 events）。
 
+**`harness dashboard` 报 `Address already in use`？**
+
+9999 端口被之前的 dashboard 实例占着了（可能来自别的 shell、别的终端窗口、或没关的会话）。先释放：
+
+```bash
+# 谁占着
+lsof -iTCP:9999 -sTCP:LISTEN -P
+
+# 杀掉
+pgrep -f "uvicorn.*dashboard|harness dashboard" | xargs kill -9
+
+# 再跑
+harness dashboard
+```
+
 ---
 
 ## 2 · Mac-B 接入 fleet（UI 主导，5 分钟）
@@ -354,6 +369,7 @@ proposal 被创建时，harness 自动查找第一个 `role=critic` 的在跑 ag
 | Events 看不到 Mac-B 的 | peer harness < 0.2.0 没有 `events dump-json`；点 [ Update ] |
 | Proposals 一直 pending | 没有 `role=critic` 的 agent 在跑 |
 | `harness` not found after install | `exec zsh` 重载 shell |
+| `harness dashboard` 报 `Address already in use` | `pgrep -f "uvicorn.*dashboard" \| xargs kill -9` 杀旧实例，再跑 |
 
 ---
 
