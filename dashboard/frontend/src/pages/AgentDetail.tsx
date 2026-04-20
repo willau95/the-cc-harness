@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, Inbox, ListChecks, MessageSquare, Users } from "lucide-react";
 import { Link, useNavigate, useParams } from "@/lib/router";
@@ -15,6 +15,9 @@ import { EmptyState } from "@/components/EmptyState";
 import { EventRow } from "@/components/EventRow";
 import { KillButton, PauseResumeButton } from "@/components/AgentActionButtons";
 import { BackLink } from "@/components/BackLink";
+import { AgentLiveView } from "@/components/AgentLiveView";
+import { AgentChanges } from "@/components/AgentChanges";
+import { PageTabBar } from "@/components/PageTabBar";
 import { Button } from "@/components/ui/button";
 import { timeAgo } from "@/lib/timeAgo";
 import { deriveAgentStatus } from "@/lib/status-colors";
@@ -124,8 +127,40 @@ export function AgentDetailPage() {
         </div>
       </section>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <section className="space-y-2">
+      <AgentDetailTabs agentId={agentId} data={data} />
+    </div>
+  );
+}
+
+type TabKey = "live" | "changes" | "overview" | "events";
+const TABS = [
+  { value: "live", label: "Live view" },
+  { value: "changes", label: "Changes" },
+  { value: "overview", label: "Overview" },
+  { value: "events", label: "Events" },
+];
+
+function AgentDetailTabs({ agentId, data }: { agentId: string; data: NonNullable<ReturnType<typeof import("@/api/agents").agentsApi.get> extends Promise<infer T> ? T : never> }) {
+  const [tab, setTab] = useState<TabKey>("live");
+  return (
+    <div className="space-y-4">
+      <PageTabBar
+        items={TABS}
+        value={tab}
+        onValueChange={(v) => setTab(v as TabKey)}
+      />
+      {tab === "live" && <AgentLiveView agentId={agentId} />}
+      {tab === "changes" && <AgentChanges agentId={agentId} />}
+      {tab === "overview" && <AgentOverview data={data} />}
+      {tab === "events" && <AgentEvents data={data} agentId={agentId} />}
+    </div>
+  );
+}
+
+function AgentOverview({ data }: { data: NonNullable<ReturnType<typeof import("@/api/agents").agentsApi.get> extends Promise<infer T> ? T : never> }) {
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <section className="space-y-2">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
               Active tasks
@@ -184,24 +219,22 @@ export function AgentDetailPage() {
             )}
           </div>
         </section>
-      </div>
-
-      <section className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-            Recent events
-          </h2>
-        </div>
-        <div className="border border-border rounded-lg overflow-hidden">
-          {!data.recent_events?.length ? (
-            <EmptyState icon={Activity} message="No events yet." />
-          ) : (
-            data.recent_events
-              .slice(0, 50)
-              .map((event, i) => <EventRow key={`${event.ts}-${i}`} event={{ ...event, agent: agentId }} />)
-          )}
-        </div>
-      </section>
     </div>
+  );
+}
+
+function AgentEvents({ data, agentId }: { data: NonNullable<ReturnType<typeof import("@/api/agents").agentsApi.get> extends Promise<infer T> ? T : never>; agentId: string }) {
+  return (
+    <section className="space-y-2">
+      <div className="border border-border rounded-lg overflow-hidden">
+        {!data.recent_events?.length ? (
+          <EmptyState icon={Activity} message="No events yet." />
+        ) : (
+          data.recent_events
+            .slice(0, 50)
+            .map((event, i) => <EventRow key={`${event.ts}-${i}`} event={{ ...event, agent: agentId }} />)
+        )}
+      </div>
+    </section>
   );
 }

@@ -34,11 +34,67 @@ def _check_pause() -> bool:
         return False
 
 
+def _surface_new_inbox() -> list[dict] | None:
+    """Check this agent's inbox for messages that arrived since the last tool
+    call and weren't yet read. Return a list of compact summaries if any,
+    else None. The dashboard / CLI writes an envelope when a human (or peer)
+    sends a message; this hook surfaces them on the very next tool call so
+    claude sees them without the user having to type 'check inbox'."""
+    try:
+        from harness import identity, mailbox  # type: ignore
+        folder = find_project_root()
+        ident = identity.load_identity(folder)
+        if not ident:
+            return None
+        aid = ident["agent_id"]
+        # Track which envelopes we've already surfaced so we don't repeat them
+        import json as _json
+        seen_path = folder / ".harness" / "inbox_seen.json"
+        seen: set[str] = set()
+        if seen_path.exists():
+            try:
+                seen = set(_json.loads(seen_path.read_text()) or [])
+            except Exception:
+                seen = set()
+        all_msgs = mailbox.peek(aid, limit=50)
+        fresh = [m for m in all_msgs if m.get("msg_id") not in seen]
+        if not fresh:
+            return None
+        # Record as seen so the next tool call doesn't re-show them
+        try:
+            new_seen = list(seen | {m.get("msg_id") for m in fresh if m.get("msg_id")})
+            seen_path.write_text(_json.dumps(new_seen[-500:]))
+        except Exception:
+            pass
+        return [{
+            "from": m.get("from"),
+            "subject": m.get("subject"),
+            "body": (m.get("body") or "")[:2000],
+            "created_at": m.get("created_at"),
+            "msg_id": m.get("msg_id"),
+        } for m in fresh]
+    except Exception:
+        return None
+
+
 def emit(obj: dict) -> None:
     _beat_current_agent()
     if _check_pause() and obj.get("ok") is not False:
         obj = {"ok": False, "paused": True,
                "error": "agent is paused (human gate); resume via dashboard or remove .harness/paused"}
+    # Piggyback new inbox messages onto every successful tool result so claude
+    # reads them on its very next turn. Presented as _notify so role templates
+    # can teach claude to check this field.
+    if obj.get("ok") is not False:
+        new_msgs = _surface_new_inbox()
+        if new_msgs:
+            obj = {**obj,
+                   "_notify": {
+                       "type": "new_inbox_messages",
+                       "count": len(new_msgs),
+                       "messages": new_msgs,
+                       "instruction": "You have new inbox messages. Read them and respond appropriately before continuing your current task.",
+                   }}
     json.dump(obj, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")
 

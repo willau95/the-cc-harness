@@ -198,12 +198,14 @@ export interface ChatMessage {
   body?: string | null;
   created_at?: string | null;
   direction: "inbound" | "outbound";
+  read?: boolean;
   [key: string]: unknown;
 }
 
 export interface ChatThread {
   agent_id: string;
   count: number;
+  unread_count?: number;
   thread: ChatMessage[];
 }
 

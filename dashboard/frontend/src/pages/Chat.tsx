@@ -207,9 +207,20 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.body ?? ""}</ReactMarkdown>
         </div>
       </div>
-      <div className="text-[10px] text-muted-foreground">
+      <div className="text-[10px] text-muted-foreground flex items-center gap-1.5">
         {isOutbound && message.to && <span className="font-mono">→ {message.to} · </span>}
         {message.created_at ? timeAgo(message.created_at) : ""}
+        {!isOutbound && message.read === false && (
+          <span
+            className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-blue-500/20 text-blue-500 dark:text-blue-400"
+            title="Agent hasn't read this yet. Auto-surfaces on its next tool call, or user can type /inbox in the terminal."
+          >
+            UNREAD
+          </span>
+        )}
+        {!isOutbound && message.read === true && (
+          <span className="text-muted-foreground/60">· read</span>
+        )}
       </div>
     </div>
   );

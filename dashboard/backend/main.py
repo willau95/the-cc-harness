@@ -22,7 +22,7 @@ if str(REPO_ROOT) not in sys.path:
 from harness import config, registry, heartbeat, arsenal, mailbox, eventlog
 from harness import project, proposals, checkpoint, identity as ident_mod
 from harness import control as fleet_control, remote as fleet_remote
-from harness import liveness
+from harness import liveness, transcript
 from harness._util import read_jsonl, now_iso
 
 # Pydantic for request bodies
@@ -180,6 +180,136 @@ def api_fleet() -> dict:
                          "paused": _paused_for(ag),
                          "process_alive": alive})
     return {"count": len(enriched), "agents": enriched}
+
+
+@app.get("/api/agents/{agent_id}/transcript")
+def api_agent_transcript(agent_id: str, limit: int = 300) -> dict:
+    """Return a normalized timeline from Claude Code's per-session JSONL.
+    Lets the dashboard show what the agent is actually thinking / doing /
+    editing, without the user having to switch to the terminal. Local only
+    for v1 — remote transcripts require fleet-ssh tail."""
+    ag = registry.find(agent_id)
+    if not ag:
+        return JSONResponse({"error": "not_found"}, status_code=404)
+    folder = ag.get("folder")
+    if not folder or not Path(folder).exists():
+        return {"agent_id": agent_id, "available": False,
+                "reason": "folder not local to this machine", "timeline": []}
+    meta = transcript.session_metadata(folder)
+    if not meta:
+        return {"agent_id": agent_id, "available": False,
+                "reason": "no claude session found for this folder", "timeline": []}
+    tl = transcript.read_timeline(folder, limit=limit)
+    return {"agent_id": agent_id, "available": True,
+            "session": meta, "count": len(tl), "timeline": tl}
+
+
+@app.get("/api/agents/{agent_id}/activity")
+def api_agent_activity(agent_id: str) -> dict:
+    """Read the PreToolUse/PostToolUse-written current_activity.json."""
+    ag = registry.find(agent_id)
+    if not ag:
+        return JSONResponse({"error": "not_found"}, status_code=404)
+    folder = ag.get("folder")
+    if not folder:
+        return {"activity": None}
+    path = Path(folder) / ".harness" / "current_activity.json"
+    if not path.exists():
+        return {"activity": None}
+    try:
+        return {"activity": json.loads(path.read_text())}
+    except Exception:
+        return {"activity": None}
+
+
+@app.get("/api/agents/{agent_id}/changes")
+def api_agent_changes(agent_id: str) -> dict:
+    """Show filesystem changes in an agent's folder. Tries git diff first;
+    falls back to mtime-based recent-files list if the folder is not a repo."""
+    import subprocess as _sp
+    ag = registry.find(agent_id)
+    if not ag:
+        return JSONResponse({"error": "not_found"}, status_code=404)
+    folder = ag.get("folder")
+    if not folder or not Path(folder).exists():
+        return {"agent_id": agent_id, "available": False,
+                "reason": "folder not local to this machine"}
+    cwd = Path(folder)
+    # git path
+    try:
+        git_status = _sp.run(["git", "-C", str(cwd), "status", "--porcelain"],
+                             capture_output=True, text=True, timeout=5)
+        if git_status.returncode == 0:
+            files = []
+            for line in git_status.stdout.splitlines():
+                if not line.strip():
+                    continue
+                mark = line[:2]
+                path = line[3:].strip()
+                # Per-file stat
+                diff_stat = _sp.run(
+                    ["git", "-C", str(cwd), "diff", "--numstat", "--", path],
+                    capture_output=True, text=True, timeout=5,
+                )
+                added = deleted = 0
+                if diff_stat.returncode == 0 and diff_stat.stdout.strip():
+                    parts = diff_stat.stdout.strip().split("\t")
+                    try:
+                        added = int(parts[0]) if parts[0] != "-" else 0
+                        deleted = int(parts[1]) if parts[1] != "-" else 0
+                    except (ValueError, IndexError):
+                        pass
+                files.append({"path": path, "status": mark.strip() or "?",
+                              "added": added, "deleted": deleted})
+            return {"agent_id": agent_id, "available": True, "kind": "git",
+                    "files": files, "count": len(files)}
+    except Exception:
+        pass
+    # Fallback: recent mtime
+    try:
+        recent = sorted(
+            (p for p in cwd.rglob("*") if p.is_file()
+             and not any(part.startswith(".") for part in p.parts)),
+            key=lambda p: p.stat().st_mtime, reverse=True,
+        )[:50]
+        cutoff = time.time() - 24 * 3600
+        files = [{"path": str(p.relative_to(cwd)),
+                  "mtime": p.stat().st_mtime,
+                  "size": p.stat().st_size,
+                  "recent": p.stat().st_mtime > cutoff}
+                 for p in recent]
+        return {"agent_id": agent_id, "available": True, "kind": "mtime",
+                "files": files, "count": len(files)}
+    except Exception as e:
+        return {"agent_id": agent_id, "available": False, "reason": str(e)}
+
+
+@app.get("/api/agents/{agent_id}/file-diff")
+def api_agent_file_diff(agent_id: str, path: str) -> dict:
+    """Return the git diff for one file within the agent's folder."""
+    import subprocess as _sp
+    ag = registry.find(agent_id)
+    if not ag:
+        return JSONResponse({"error": "not_found"}, status_code=404)
+    folder = ag.get("folder")
+    if not folder or not Path(folder).exists():
+        return JSONResponse({"error": "folder not local"}, status_code=404)
+    # Guard against path escape
+    full = (Path(folder) / path).resolve()
+    if not str(full).startswith(str(Path(folder).resolve())):
+        return JSONResponse({"error": "invalid path"}, status_code=400)
+    try:
+        r = _sp.run(["git", "-C", str(folder), "diff", "--", path],
+                    capture_output=True, text=True, timeout=8)
+        if r.returncode != 0:
+            # Maybe untracked — show the full file instead
+            if full.exists() and full.is_file():
+                return {"path": path, "kind": "untracked",
+                        "content": full.read_text(errors="replace")[:100_000]}
+            return JSONResponse({"error": r.stderr.strip() or "git diff failed"}, status_code=500)
+        return {"path": path, "kind": "diff", "diff": r.stdout}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.get("/api/agents/{agent_id}")
@@ -895,9 +1025,25 @@ def api_chat_thread(agent_id: str, limit: int = 50) -> dict:
                 "created_at": e.get("ts"),
                 "direction": "outbound",
             })
-    inbound = [{**m, "direction": "inbound"} for m in inbox_lines]
-    thread = sorted(inbound + outbox, key=lambda x: x.get("created_at") or "")
-    return {"agent_id": agent_id, "count": len(thread), "thread": thread[-limit:]}
+    # read/unread state: "consumed" msg_ids were seen by the agent (via
+    # receive_messages tool call or inbox_peek surfacing). Everything else is
+    # still unread.
+    consumed = mailbox._load_consumed(agent_id)
+    inbound = [
+        {**m, "direction": "inbound",
+         "read": m.get("msg_id") in consumed}
+        for m in inbox_lines
+    ]
+    # Outbound is always "sent" — agent wrote them, nothing to "read"
+    outbox_with_read = [{**o, "read": True} for o in outbox]
+    thread = sorted(inbound + outbox_with_read, key=lambda x: x.get("created_at") or "")
+    unread_count = sum(1 for m in thread if m.get("direction") == "inbound" and not m.get("read"))
+    return {
+        "agent_id": agent_id,
+        "count": len(thread),
+        "unread_count": unread_count,
+        "thread": thread[-limit:],
+    }
 
 
 @app.post("/api/chat/{agent_id}/send")

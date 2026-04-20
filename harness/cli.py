@@ -186,6 +186,16 @@ def init(role, name, project_name):
     # that actually has `harness` on its path.
     _rewrite_tool_scripts([skill_dst, conv_dst, role_skill_dst])
 
+    # Install project-scoped slash commands (/inbox, ...) — Claude Code reads
+    # from .claude/commands/<name>.md. These let the user type /<cmd> in the
+    # claude terminal instead of "please check your inbox".
+    cmds_src = REPO_ROOT / "slash-commands"
+    cmds_dst = folder / ".claude" / "commands"
+    if cmds_src.exists():
+        cmds_dst.mkdir(parents=True, exist_ok=True)
+        for f in cmds_src.glob("*.md"):
+            (cmds_dst / f.name).write_text(f.read_text())
+
     # Write settings.local.json — Claude Code's matchers schema
     # Events: SessionStart + PreCompact (PascalCase, no 'on' prefix).
     # Structure: event → array of matcher entries → each with hooks array of {type, command}
@@ -207,6 +217,20 @@ def init(role, name, project_name):
             "hooks": [{
                 "type": "command",
                 "command": f"bash {hook_root / 'on_compact.sh'} {folder}",
+            }],
+        }],
+        "PreToolUse": [{
+            "matcher": "",
+            "hooks": [{
+                "type": "command",
+                "command": f"bash {hook_root / 'pre_tool_use.sh'} {folder}",
+            }],
+        }],
+        "PostToolUse": [{
+            "matcher": "",
+            "hooks": [{
+                "type": "command",
+                "command": f"bash {hook_root / 'post_tool_use.sh'} {folder}",
             }],
         }],
     }
