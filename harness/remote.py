@@ -195,6 +195,85 @@ def bootstrap_peer_machine(machine: str) -> dict:
             "peers_count": len(all_peers)}
 
 
+def push_equipment_to_peer(machine: str, slugs: list[str]) -> dict:
+    """Rsync each equipment item's full dir (meta.yaml + analysis.md + content/)
+    into the peer's ~/.harness/equipment/items/<slug>/. Also re-index the peer's
+    sqlite so `harness equipment get <slug>` works over there.
+
+    Called before spawn_remote_agent when equip_csv is non-empty. Without this
+    the peer's `harness init --equip X` would fail because X isn't in its local
+    equipment library.
+    """
+    if not slugs:
+        return {"ok": True, "pushed": []}
+    import subprocess as _sp
+    pushed: list[str] = []
+    failed: list[dict] = []
+    for slug in slugs:
+        src = config.HARNESS_ROOT / "equipment" / "items" / slug
+        if not src.exists():
+            failed.append({"slug": slug, "error": "not in local library"})
+            continue
+        # Ensure target parent exists
+        mkdir_r = exec_remote(machine, "mkdir -p $HOME/.harness/equipment/items", timeout=8)
+        if not mkdir_r.get("ok"):
+            failed.append({"slug": slug, "error": "mkdir failed on peer"})
+            continue
+        # Resolve peer user@ip via fleet-ssh target alias; use rsync -e fleet-ssh if available
+        # Simpler: fleet-ssh invokes underlying ssh — use plain scp -r via fleet-ssh's config.
+        # fleet-ssh maps <name> → user@ip; we can find that and rsync directly.
+        m = find_machine(machine)
+        if not m:
+            failed.append({"slug": slug, "error": f"unknown machine {machine}"})
+            continue
+        target = f"{m['user']}@{m['ip']}"
+        # rsync whole item dir (preserve permissions, delete removed files, exclude .git in cloned repos)
+        try:
+            r = _sp.run(
+                ["rsync", "-az", "--delete",
+                 "-e", "ssh -o StrictHostKeyChecking=no -o BatchMode=yes",
+                 "--exclude", ".git/",
+                 f"{src}/",
+                 f"{target}:~/.harness/equipment/items/{slug}/"],
+                capture_output=True, text=True, timeout=180,
+            )
+            if r.returncode != 0:
+                failed.append({"slug": slug, "error": r.stderr.strip()[:200]})
+                continue
+        except Exception as e:
+            failed.append({"slug": slug, "error": str(e)})
+            continue
+        # Re-index: run harness equipment get on peer to force sqlite upsert via
+        # the CLI's own path. Easiest approach is to call `harness equipment add`
+        # with --source pointing at the just-rsynced content dir.
+        content_dir = f"$HOME/.harness/equipment/items/{slug}/content"
+        # Read kind from the rsynced meta.yaml
+        kind_r = exec_remote(
+            machine,
+            f"grep '^kind:' $HOME/.harness/equipment/items/{slug}/meta.yaml | head -1 | awk '{{print $2}}'",
+            timeout=6,
+        )
+        if not kind_r.get("ok"):
+            failed.append({"slug": slug, "error": "could not read kind from peer meta.yaml"})
+            continue
+        import re as _re
+        kind = _re.sub(r"\x1b\[[0-9;]*m", "", kind_r.get("stdout") or "")
+        kind = _re.sub(r"^\[[^\]\n]+\]\s*\n?", "", kind, flags=_re.MULTILINE).strip()
+        if not kind:
+            failed.append({"slug": slug, "error": "empty kind on peer"})
+            continue
+        add_r = exec_remote(
+            machine,
+            f"~/.local/bin/harness equipment add --slug {slug} --kind {kind} --source {content_dir} 2>&1 | tail -5",
+            timeout=30,
+        )
+        if not add_r.get("ok"):
+            failed.append({"slug": slug, "error": "peer index update failed: " + (add_r.get("stderr") or "")[:100]})
+            continue
+        pushed.append(slug)
+    return {"ok": len(failed) == 0, "pushed": pushed, "failed": failed}
+
+
 def spawn_remote_agent(machine: str, role: str, name: str, folder: str,
                         initial_prompt: str | None = None,
                         equip_csv: str | None = None) -> dict:
@@ -204,6 +283,17 @@ def spawn_remote_agent(machine: str, role: str, name: str, folder: str,
     """
     folder_esc = folder.replace("'", "'\"'\"'")
     equip_part = f" --equip {equip_csv}" if equip_csv else ""
+
+    # Push equipment to peer BEFORE running init, else init --equip fails
+    # because the peer's library doesn't have those slugs.
+    equip_push = {"ok": True, "pushed": []}
+    if equip_csv:
+        slugs = [s.strip() for s in equip_csv.split(",") if s.strip()]
+        equip_push = push_equipment_to_peer(machine, slugs)
+        if not equip_push.get("ok"):
+            return {"ok": False, "error": "equipment sync failed",
+                    "equip_sync": equip_push}
+
     cmd = (
         f"mkdir -p '{folder_esc}' && cd '{folder_esc}' && "
         f"~/.local/bin/harness init --role {role} --name {name}{equip_part}"
