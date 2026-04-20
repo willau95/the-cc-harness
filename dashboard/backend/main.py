@@ -165,25 +165,125 @@ def _alive_for(ag: dict) -> bool | None:
 @app.get("/api/fleet")
 def api_fleet() -> dict:
     agents = registry.live_agents()
+
+    # For cross-machine agents, the heartbeat file lives on the peer's disk.
+    # Batch-fetch those so we don't per-agent-per-request SSH. One call per
+    # peer, 5s TTL cache.
+    remote_beats: dict[str, str | None] = {}
+    remote_pids: dict[str, bool] = {}  # agent_id -> process_alive
+    if fleet_remote.fleet_ssh_available():
+        by_machine: dict[str, list[dict]] = {}
+        for ag in agents:
+            m = ag.get("machine")
+            if m and not fleet_remote.is_local_machine(m):
+                by_machine.setdefault(m, []).append(ag)
+
+        cache_key = "fleet-remote-beats"
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            remote_beats, remote_pids = cached
+        else:
+            def _probe_peer(machine: str, peer_agents: list[dict]) -> tuple[dict, dict]:
+                """One SSH hop: for each agent, emit a marker + raw last JSONL line
+                + session.pid status. We parse on this side to avoid ssh-quoting hell."""
+                parts = []
+                for ag in peer_agents:
+                    aid = ag["agent_id"]
+                    folder = ag.get("folder") or ""
+                    # BEAT:<aid>:<raw-jsonl-line>   (line is one JSON with 'ts')
+                    parts.append(
+                        f'echo "BEAT:{aid}:$(tail -1 $HOME/.harness/heartbeats/{aid}.jsonl 2>/dev/null)"'
+                    )
+                    if folder:
+                        parts.append(
+                            f'echo PID:{aid}:$(if [ -f "{folder}/.harness/session.pid" ]; then '
+                            f'p=$(cat "{folder}/.harness/session.pid"); '
+                            f'if kill -0 "$p" 2>/dev/null; then echo alive; else echo dead; fi; '
+                            f"else echo unknown; fi)"
+                        )
+                cmd = "; ".join(parts)
+                r = fleet_remote.exec_remote(machine, cmd, timeout=8)
+                beats: dict[str, str | None] = {}
+                pids: dict[str, bool] = {}
+                if not r.get("ok"):
+                    return beats, pids
+                import re as _re
+                import json as _json
+                text = _re.sub(r"\x1b\[[0-9;]*m", "", r.get("stdout") or "")
+                text = _re.sub(r"^\[[^\]\n]+\]\s*\n?", "", text, flags=_re.MULTILINE)
+                for line in text.splitlines():
+                    line = line.strip()
+                    if line.startswith("BEAT:"):
+                        rest = line[5:]
+                        colon = rest.find(":")
+                        if colon < 0:
+                            continue
+                        aid = rest[:colon]
+                        raw = rest[colon+1:].strip()
+                        if not raw:
+                            beats[aid] = None
+                            continue
+                        try:
+                            rec = _json.loads(raw)
+                            beats[aid] = rec.get("ts")
+                        except _json.JSONDecodeError:
+                            beats[aid] = None
+                    elif line.startswith("PID:"):
+                        rest = line[4:]
+                        colon = rest.find(":")
+                        if colon < 0:
+                            continue
+                        aid = rest[:colon]
+                        state = rest[colon+1:].strip()
+                        if state == "alive":
+                            pids[aid] = True
+                        elif state == "dead":
+                            pids[aid] = False
+                return beats, pids
+
+            merged_beats: dict[str, str | None] = {}
+            merged_pids: dict[str, bool] = {}
+            futures = {_REMOTE_POOL.submit(_probe_peer, m, pa): m for m, pa in by_machine.items()}
+            for fut in as_completed(futures, timeout=12):
+                try:
+                    b, p = fut.result()
+                    merged_beats.update(b)
+                    merged_pids.update(p)
+                except Exception:
+                    pass
+            remote_beats = merged_beats
+            remote_pids = merged_pids
+            _cache_put(cache_key, (remote_beats, remote_pids))
+
     enriched = []
     for ag in agents:
         aid = ag["agent_id"]
-        last = heartbeat.last_beat(aid)
-        stale_raw = heartbeat.stale(aid)
+        # Heartbeat: local first, fall back to remote probe
+        last = heartbeat.last_beat(aid) or remote_beats.get(aid)
+        # Staleness: if we have a last_beat, derive; else defer to fallback
+        if last:
+            try:
+                from datetime import datetime, timezone, timedelta
+                dt = datetime.strptime(last, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                stale_raw = (datetime.now(timezone.utc) - dt) > timedelta(
+                    minutes=config.load_config().get("zombie_timeout_minutes", 30))
+            except Exception:
+                stale_raw = heartbeat.stale(aid)
+        else:
+            stale_raw = heartbeat.stale(aid)
+
+        # Liveness: local PID first, then remote PID, else None
         alive = _alive_for(ag)
-        # Combined semantics:
-        #   process_alive=False → definitely offline regardless of heartbeat
-        #   process_alive=True  → process running; heartbeat stale just means
-        #                         "hasnt called a tool in 30min" (= idle, UI
-        #                         differentiates); real offline is impossible.
-        #   process_alive=None  → unknown (remote, or pre-PID); fall back to
-        #                         heartbeat-only.
+        if alive is None and aid in remote_pids:
+            alive = remote_pids[aid]
+
         if alive is False:
             stale = True
         elif alive is True:
-            stale = stale_raw  # UI maps (alive=true + stale=true) → "idle"
+            stale = stale_raw
         else:
             stale = stale_raw
+
         enriched.append({**ag, "last_beat": last, "stale": stale,
                          "paused": _paused_for(ag),
                          "process_alive": alive})
