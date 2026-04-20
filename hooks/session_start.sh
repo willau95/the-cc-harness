@@ -9,7 +9,22 @@
 # First arg = agent folder (passed by settings.local.json hook command line).
 
 set -eo pipefail
+
+# Log every invocation so a silent failure (wrong path, missing harness,
+# cd failed) is debuggable. One line per event.
+HOOK_LOG="$HOME/.harness/logs/hook.log"
+mkdir -p "$(dirname "$HOOK_LOG")"
+_log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)][SessionStart] $*" >> "$HOOK_LOG"; }
+trap '_log "EXIT code=$?"' EXIT
+
 AGENT_FOLDER="${1:-$PWD}"
+_log "invoked args=$# folder=$AGENT_FOLDER cwd=$PWD ppid=$PPID"
+if [ ! -d "$AGENT_FOLDER" ]; then
+    _log "ERROR: folder does not exist: $AGENT_FOLDER (args received: $*)"
+    # Still emit valid JSON so claude doesn't error on the hook
+    echo '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":""}}'
+    exit 0
+fi
 cd "$AGENT_FOLDER"
 
 # Claude Code may invoke hooks with a trimmed PATH. Prepend common harness install locations.

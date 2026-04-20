@@ -230,33 +230,43 @@ def init(role, name, project_name):
     settings_path = settings_dir / "settings.local.json"
     hook_root = REPO_ROOT / "hooks"
 
+    # Properly shell-quote paths. Without this, any folder with spaces (very
+    # common: `Desktop/testing flow`) breaks hook invocation because bash
+    # treats the space as argument separator and the hook receives a truncated
+    # path → cd fails → no heartbeat → agent shows stale forever.
+    def _sh_quote(p) -> str:
+        s = str(p)
+        return "'" + s.replace("'", "'\\''") + "'"
+
+    folder_q = _sh_quote(folder)
+
     our_hooks = {
         "SessionStart": [{
             "matcher": "",
             "hooks": [{
                 "type": "command",
-                "command": f"bash {hook_root / 'session_start.sh'} {folder}",
+                "command": f"bash {_sh_quote(hook_root / 'session_start.sh')} {folder_q}",
             }],
         }],
         "PreCompact": [{
             "matcher": "",
             "hooks": [{
                 "type": "command",
-                "command": f"bash {hook_root / 'on_compact.sh'} {folder}",
+                "command": f"bash {_sh_quote(hook_root / 'on_compact.sh')} {folder_q}",
             }],
         }],
         "PreToolUse": [{
             "matcher": "",
             "hooks": [{
                 "type": "command",
-                "command": f"bash {hook_root / 'pre_tool_use.sh'} {folder}",
+                "command": f"bash {_sh_quote(hook_root / 'pre_tool_use.sh')} {folder_q}",
             }],
         }],
         "PostToolUse": [{
             "matcher": "",
             "hooks": [{
                 "type": "command",
-                "command": f"bash {hook_root / 'post_tool_use.sh'} {folder}",
+                "command": f"bash {_sh_quote(hook_root / 'post_tool_use.sh')} {folder_q}",
             }],
         }],
     }
