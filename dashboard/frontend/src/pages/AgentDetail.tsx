@@ -79,7 +79,7 @@ export function AgentDetailPage() {
     );
   }
 
-  const status = deriveAgentStatus({ stale: data.stale, paused: data.agent.paused });
+  const status = deriveAgentStatus({ stale: data.stale, paused: data.agent.paused, process_alive: (data.agent as { process_alive?: boolean | null }).process_alive });
   const isPaused = Boolean(data.agent.paused);
 
   return (

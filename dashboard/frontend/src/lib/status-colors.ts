@@ -22,6 +22,7 @@ export const statusBadge: Record<string, string> = {
   paused: "bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300",
   idle: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/50 dark:text-yellow-300",
   stale: "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300",
+  offline: "bg-neutral-200 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300",
   archived: "bg-muted text-muted-foreground",
 
   // Run / Proposal statuses
@@ -54,6 +55,7 @@ export const agentStatusDot: Record<string, string> = {
   paused: "bg-yellow-400",
   idle: "bg-yellow-400",
   stale: "bg-red-400 animate-pulse",
+  offline: "bg-neutral-400",
   error: "bg-red-400",
   archived: "bg-neutral-400",
 };
@@ -77,10 +79,17 @@ export const trustBadge: Record<string, string> = {
 export const trustBadgeDefault = "bg-muted text-muted-foreground";
 
 /**
- * Derive an agent status label from registry/heartbeat fields.
- * Order: paused > stale > running > online/idle.
+ * Derive an agent status label from registry/heartbeat/liveness fields.
+ * Order: offline (process dead) > paused > stale (idle too long) >
+ *        running (has active task) > online.
  */
-export function deriveAgentStatus(ag: { stale?: boolean; paused?: boolean; hasActiveTask?: boolean }): string {
+export function deriveAgentStatus(ag: {
+  stale?: boolean;
+  paused?: boolean;
+  hasActiveTask?: boolean;
+  process_alive?: boolean | null;
+}): string {
+  if (ag.process_alive === false) return "offline";
   if (ag.paused) return "paused";
   if (ag.stale) return "stale";
   if (ag.hasActiveTask) return "running";

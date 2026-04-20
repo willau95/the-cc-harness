@@ -243,12 +243,42 @@ def list_remote_fleet(machine: str) -> list[dict]:
             state.pop(aid, None)
         else:
             state[aid] = e
-    # Enrich with heartbeat freshness
+    # Enrich with heartbeat freshness + active process liveness.
+    # Batch the PID probes into ONE SSH roundtrip: for each agent folder,
+    # read .harness/session.pid and kill -0 it on the remote host.
+    folders = [(aid, entry.get("folder")) for aid, entry in state.items() if entry.get("folder")]
+    alive_map: dict[str, bool] = {}
+    if folders:
+        probe_lines = [
+            f'f={f!r}; if [ -f "$f/.harness/session.pid" ]; then '
+            f'p=$(cat "$f/.harness/session.pid"); '
+            f'if kill -0 "$p" 2>/dev/null; then echo "{aid}=alive"; else echo "{aid}=dead"; fi; '
+            f'else echo "{aid}=unknown"; fi'
+            for aid, f in folders
+        ]
+        probe = " ; ".join(probe_lines)
+        r = exec_remote(machine, probe, timeout=6)
+        if r.get("ok"):
+            import re as _re
+            text = _re.sub(r"\x1b\[[0-9;]*m", "", r.get("stdout") or "")
+            text = _re.sub(r"^\[[^\]\n]+\]\s*\n?", "", text, flags=_re.MULTILINE)
+            for line in text.splitlines():
+                line = line.strip()
+                if "=alive" in line:
+                    alive_map[line.split("=", 1)[0]] = True
+                elif "=dead" in line:
+                    alive_map[line.split("=", 1)[0]] = False
+
     out = []
     for aid, entry in state.items():
         hb = read_remote_jsonl(machine, f"~/.harness/heartbeats/{aid}.jsonl")
         last_ts = hb[-1]["ts"] if hb else None
-        out.append({**entry, "last_beat": last_ts, "remote_machine": machine})
+        out.append({
+            **entry,
+            "last_beat": last_ts,
+            "remote_machine": machine,
+            "process_alive": alive_map.get(aid),  # None if no PID file yet
+        })
     return out
 
 

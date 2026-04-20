@@ -22,6 +22,7 @@ if str(REPO_ROOT) not in sys.path:
 from harness import config, registry, heartbeat, arsenal, mailbox, eventlog
 from harness import project, proposals, checkpoint, identity as ident_mod
 from harness import control as fleet_control, remote as fleet_remote
+from harness import liveness
 from harness._util import read_jsonl, now_iso
 
 # Pydantic for request bodies
@@ -144,6 +145,23 @@ def _paused_for(ag: dict) -> bool:
         return False
 
 
+def _alive_for(ag: dict) -> bool | None:
+    """Active process check — is the claude process for this agent still up?
+    True/False if we have a PID to probe, None if unknown (remote agent or
+    pre-PID-tracking agent)."""
+    folder = ag.get("folder")
+    if not folder:
+        return None
+    # Only valid for local agents — can't signal-check a remote PID cheaply.
+    # Use the "am I on this machine" heuristic: folder must exist locally.
+    try:
+        if not Path(folder).exists():
+            return None
+        return liveness.is_alive(Path(folder))
+    except Exception:
+        return None
+
+
 @app.get("/api/fleet")
 def api_fleet() -> dict:
     agents = registry.live_agents()
@@ -152,8 +170,15 @@ def api_fleet() -> dict:
         aid = ag["agent_id"]
         last = heartbeat.last_beat(aid)
         stale = heartbeat.stale(aid)
+        alive = _alive_for(ag)
+        # If the process is demonstrably dead, override stale to True regardless
+        # of the heartbeat window — user closed the terminal, they want to see
+        # it immediately, not in 30 minutes.
+        if alive is False:
+            stale = True
         enriched.append({**ag, "last_beat": last, "stale": stale,
-                         "paused": _paused_for(ag)})
+                         "paused": _paused_for(ag),
+                         "process_alive": alive})
     return {"count": len(enriched), "agents": enriched}
 
 
@@ -162,9 +187,12 @@ def api_agent(agent_id: str) -> dict:
     ag = registry.find(agent_id)
     if not ag:
         return JSONResponse({"error": "not_found"}, status_code=404)
-    ag = {**ag, "paused": _paused_for(ag)}
+    alive = _alive_for(ag)
+    ag = {**ag, "paused": _paused_for(ag), "process_alive": alive}
     last = heartbeat.last_beat(agent_id)
     stale = heartbeat.stale(agent_id)
+    if alive is False:
+        stale = True
     # checkpoint for agents whose folder is accessible from this machine
     tasks = []
     folder = Path(ag.get("folder", ""))

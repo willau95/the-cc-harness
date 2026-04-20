@@ -57,7 +57,7 @@ export function FleetControlPanel({ tab = "all", onTabChange }: FleetControlPane
 
   const filtered = useMemo(() => {
     if (tab === "all") return agents;
-    return agents.filter((a) => deriveAgentStatus({ stale: a.stale, paused: a.paused }) === tab);
+    return agents.filter((a) => deriveAgentStatus({ stale: a.stale, paused: a.paused, process_alive: a.process_alive as boolean | null | undefined }) === tab);
   }, [agents, tab]);
 
   const bulkInvalidate = () => {
@@ -143,7 +143,7 @@ export function FleetControlPanel({ tab = "all", onTabChange }: FleetControlPane
           ) : (
             <div className="border border-border rounded-lg overflow-hidden">
               {filtered.map((agent) => {
-                const status = deriveAgentStatus({ stale: agent.stale, paused: agent.paused });
+                const status = deriveAgentStatus({ stale: agent.stale, paused: agent.paused, process_alive: agent.process_alive as boolean | null | undefined });
                 const dotClass = agentStatusDot[status] ?? agentStatusDotDefault;
                 return (
                   <EntityRow

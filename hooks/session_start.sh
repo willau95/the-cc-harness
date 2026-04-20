@@ -18,6 +18,13 @@ export PATH="$HOME/.local/bin:$HOME/.local/pipx/venvs/claude-harness/bin:/opt/ho
 # Drain stdin (Claude Code pipes JSON we don't currently consume).
 cat > /dev/null || true
 
+# Record the parent process id (= claude itself) so the dashboard can do
+# active liveness checks instead of waiting for the 30-min heartbeat timeout.
+# When the user closes the terminal, claude dies, this PID goes stale, and
+# the dashboard shows the agent offline within seconds.
+mkdir -p "$AGENT_FOLDER/.harness"
+echo "$PPID" > "$AGENT_FOLDER/.harness/session.pid"
+
 # Heartbeat first — keeps the agent fresh in the fleet registry every time a
 # session starts, resumes, or returns from compact. Without this the agent
 # shows as zombie after 10 min idle, even if Claude Code is still open.
