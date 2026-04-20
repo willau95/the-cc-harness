@@ -70,7 +70,7 @@ export function ActiveAgentsPanel({ limit = 8 }: ActiveAgentsPanelProps) {
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-4">
         {live.map((agent) => {
-          const status = deriveAgentStatus({ stale: agent.stale, paused: agent.paused, process_alive: agent.process_alive as boolean | null | undefined });
+          const status = deriveAgentStatus({ stale: agent.stale, paused: agent.paused, process_alive: agent.process_alive as boolean | null | undefined, last_beat: agent.last_beat as string | null | undefined });
           const dotClass = agentStatusDot[status] ?? agentStatusDotDefault;
           const isActive = status === "running" || status === "online";
           return (

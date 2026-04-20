@@ -15,6 +15,15 @@ cd "$AGENT_FOLDER"
 
 export PATH="$HOME/.local/bin:$HOME/.local/pipx/venvs/claude-harness/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
+# Heartbeat on every tool call — keeps the agent from drifting to stale
+# when it's using non-harness tools (Read/Edit/Bash/Grep/...) and hasn't
+# invoked any of our skill tools in the last 30 min.
+if command -v harness >/dev/null 2>&1; then
+    harness heartbeat >/dev/null 2>&1 || true
+else
+    python3 -m harness.cli heartbeat >/dev/null 2>&1 || true
+fi
+
 # Read stdin JSON and pull out tool_name + a short input summary
 mkdir -p "$AGENT_FOLDER/.harness"
 INPUT_JSON="$(cat || true)"

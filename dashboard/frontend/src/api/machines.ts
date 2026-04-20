@@ -18,4 +18,9 @@ export const machinesApi = {
       `/machines/${encodeURIComponent(name)}/install-harness`,
       {},
     ),
+  fixBaseUrl: (name: string) =>
+    api.post<{ ok: boolean; machine: string; output: string }>(
+      `/machines/${encodeURIComponent(name)}/fix-base-url`,
+      {},
+    ),
 };

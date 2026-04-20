@@ -56,6 +56,7 @@ export const agentStatusDot: Record<string, string> = {
   idle: "bg-yellow-400",
   stale: "bg-red-400 animate-pulse",
   offline: "bg-neutral-400",
+  pending: "bg-blue-400 animate-pulse",
   error: "bg-red-400",
   archived: "bg-neutral-400",
 };
@@ -80,18 +81,34 @@ export const trustBadgeDefault = "bg-muted text-muted-foreground";
 
 /**
  * Derive an agent status label from registry/heartbeat/liveness fields.
- * Order: offline (process dead) > paused > stale (idle too long) >
- *        running (has active task) > online.
+ *
+ * Semantics:
+ *   offline  — claude process is demonstrably dead (session.pid cant be
+ *              signaled) → OR → we have no PID AND heartbeat is stale
+ *   paused   — .harness/paused sentinel present (human clicked Pause)
+ *   idle     — claude IS alive but no skill-tool call / hook fire in the
+ *              heartbeat window. Normal when you leave a claude open but
+ *              don't chat with it. Yellow, not alarming.
+ *   stale    — unknown liveness (remote or pre-PID agent) AND heartbeat
+ *              stale. Red.
+ *   running  — has an active task checkpoint
+ *   online   — heartbeat fresh, no flags
  */
 export function deriveAgentStatus(ag: {
   stale?: boolean;
   paused?: boolean;
   hasActiveTask?: boolean;
   process_alive?: boolean | null;
+  last_beat?: string | null;
 }): string {
   if (ag.process_alive === false) return "offline";
   if (ag.paused) return "paused";
-  if (ag.stale) return "stale";
+  // Never-beat: registered but claude hasn't been started yet. Blue pending,
+  // not red stale — nothing's wrong, user just hasn't launched claude.
+  if (!ag.last_beat && ag.process_alive !== true) return "pending";
+  if (ag.stale) {
+    return ag.process_alive === true ? "idle" : "stale";
+  }
   if (ag.hasActiveTask) return "running";
   return "online";
 }

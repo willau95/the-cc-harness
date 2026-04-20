@@ -222,6 +222,7 @@ export interface Machine {
   harness_version?: string | null;
   agent_count?: number;
   offline_reason?: string | null;
+  anthropic_base_url_issue?: string | null;
   [key: string]: unknown;
 }
 

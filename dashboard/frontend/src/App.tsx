@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import { PageSkeleton } from "@/components/PageSkeleton";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 // Code-split every page so the initial JS bundle only contains Layout +
 // shared primitives. Each route loads its own chunk on first visit.
@@ -22,6 +23,7 @@ const NotFoundPage       = lazy(() => import("@/pages/NotFound").then(m => ({ de
 
 export function App() {
   return (
+    <ErrorBoundary>
     <Suspense fallback={<PageSkeleton variant="list" />}>
       <Routes>
         <Route element={<Layout />}>
@@ -46,5 +48,6 @@ export function App() {
         </Route>
       </Routes>
     </Suspense>
+    </ErrorBoundary>
   );
 }

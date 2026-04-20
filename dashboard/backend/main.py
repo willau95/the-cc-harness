@@ -169,13 +169,21 @@ def api_fleet() -> dict:
     for ag in agents:
         aid = ag["agent_id"]
         last = heartbeat.last_beat(aid)
-        stale = heartbeat.stale(aid)
+        stale_raw = heartbeat.stale(aid)
         alive = _alive_for(ag)
-        # If the process is demonstrably dead, override stale to True regardless
-        # of the heartbeat window — user closed the terminal, they want to see
-        # it immediately, not in 30 minutes.
+        # Combined semantics:
+        #   process_alive=False → definitely offline regardless of heartbeat
+        #   process_alive=True  → process running; heartbeat stale just means
+        #                         "hasnt called a tool in 30min" (= idle, UI
+        #                         differentiates); real offline is impossible.
+        #   process_alive=None  → unknown (remote, or pre-PID); fall back to
+        #                         heartbeat-only.
         if alive is False:
             stale = True
+        elif alive is True:
+            stale = stale_raw  # UI maps (alive=true + stale=true) → "idle"
+        else:
+            stale = stale_raw
         enriched.append({**ag, "last_beat": last, "stale": stale,
                          "paused": _paused_for(ag),
                          "process_alive": alive})
@@ -763,26 +771,50 @@ def api_machines() -> dict:
                    if (a.get("machine") or "").lower() == name)
 
     def _probe(m: dict) -> dict:
-        """One SSH hop that checks reachability + harness presence in one shot.
-        Uses file-existence (not --version) so old harness binaries also count."""
+        """One SSH hop that checks reachability + harness presence + common
+        misconfigurations (ANTHROPIC_BASE_URL leftover that breaks claude).
+        File-existence for harness so old binaries still count."""
         start = time.time()
         r = fleet_remote.exec_remote(
             m["name"],
-            "test -x $HOME/.local/bin/harness && "
-            "($HOME/.local/bin/harness --version 2>/dev/null || echo 'harness installed') "
-            "|| echo 'harness missing'",
+            # Compound probe — do it all in one round trip
+            "echo HARNESS_$(test -x $HOME/.local/bin/harness && "
+            "  ($HOME/.local/bin/harness --version 2>/dev/null || echo installed) "
+            "  || echo missing); "
+            # Check zshrc / bashrc for a set ANTHROPIC_BASE_URL (the cc-switch /
+            # claude-code-router leftover that silently breaks claude)
+            "echo BASE_URL_$(grep -h '^export ANTHROPIC_BASE_URL' "
+            "  $HOME/.zshrc $HOME/.zprofile $HOME/.bashrc $HOME/.bash_profile "
+            "  2>/dev/null | head -1 || echo clean)",
             timeout=6,
         )
         latency_ms = int((time.time() - start) * 1000)
         online = bool(r.get("ok"))
-        out = (r.get("stdout") or "").strip()
+        out = (r.get("stdout") or "")
         import re as _re
         out = _re.sub(r"\x1b\[[0-9;]*m", "", out)
         out = _re.sub(r"\A\[[^\]\n]+\]\s*\n?", "", out).strip()
-        harness_ok = online and "missing" not in out and bool(out)
-        version = out if harness_ok else None
+        # Parse each marker line
+        harness_version = None
+        harness_ok = False
+        base_url_issue = None
+        for line in out.splitlines():
+            line = line.strip()
+            if line.startswith("HARNESS_"):
+                payload = line[len("HARNESS_"):]
+                if payload == "missing" or not payload:
+                    harness_ok = False
+                else:
+                    harness_ok = True
+                    harness_version = payload
+            elif line.startswith("BASE_URL_"):
+                payload = line[len("BASE_URL_"):]
+                if payload and payload != "clean":
+                    base_url_issue = payload  # the offending export line
         return {"online": online, "latency_ms": latency_ms,
-                "harness_installed": harness_ok, "harness_version": version}
+                "harness_installed": harness_ok and online,
+                "harness_version": harness_version if harness_ok else None,
+                "anthropic_base_url_issue": base_url_issue}
 
     enriched: list[dict] = []
     probes: dict[str, dict] = {}
@@ -953,6 +985,38 @@ def api_fs_parent_dirs(machine: str | None = None) -> dict:
     }
     _cache_put(cache_key, result)
     return result
+
+
+@app.post("/api/machines/{machine}/fix-base-url")
+def api_machine_fix_base_url(machine: str) -> dict:
+    """Remove `export ANTHROPIC_BASE_URL=...` lines from the peer's shell
+    rc files. This is the cc-switch / claude-code-router leftover that makes
+    `claude` fail with 'Unable to connect to API (ConnectionRefused)'.
+
+    Safe — creates a .bak of each rc before editing."""
+    if not fleet_remote.fleet_ssh_available() and machine != "__local__":
+        return JSONResponse({"ok": False, "error": "fleet-ssh not available"}, status_code=400)
+    cmd = (
+        "for rc in $HOME/.zshrc $HOME/.zprofile $HOME/.bashrc $HOME/.bash_profile; do "
+        "  [ -f $rc ] && sed -i.bak '/^export ANTHROPIC_BASE_URL/d' $rc && "
+        "  echo patched:$rc; "
+        "done; "
+        "echo DONE"
+    )
+    if machine == "__local__":
+        import subprocess
+        try:
+            r = subprocess.run(["bash", "-lc", cmd], capture_output=True, text=True, timeout=10)
+            ok = r.returncode == 0
+            out = r.stdout
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    else:
+        r = fleet_remote.exec_remote(machine, cmd, timeout=10)
+        ok = bool(r.get("ok"))
+        out = r.get("stdout", "")
+    _CACHE.pop("machines-enriched", None)
+    return {"ok": ok, "machine": machine, "output": out[:2000]}
 
 
 @app.post("/api/machines/{machine}/bootstrap")

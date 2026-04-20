@@ -79,6 +79,15 @@ export function MachinesPage() {
     },
   });
 
+  const fixBaseUrl = useMutation({
+    mutationFn: (name: string) => machinesApi.fixBaseUrl(name),
+    onSuccess: (res, name) => {
+      qc.invalidateQueries({ queryKey: queryKeys.machines });
+      if (res.ok) pushToast(`${name}: ANTHROPIC_BASE_URL removed from shell rc`, "success");
+      else pushToast(`${name}: fix failed`, "error");
+    },
+  });
+
   if (isLoading && !data) return <PageSkeleton />;
 
   const machines = data?.machines ?? [];
@@ -150,9 +159,11 @@ fleet-ssh add <peer-name> <peer-tailscale-ip> <peer-user>`}
               onPing={() => ping.mutate(m.name)}
               onBootstrap={() => bootstrap.mutate(m.name)}
               onInstall={() => install.mutate(m.name)}
+              onFixBaseUrl={() => fixBaseUrl.mutate(m.name)}
               pingBusy={ping.isPending && ping.variables === m.name}
               bootstrapBusy={bootstrap.isPending && bootstrap.variables === m.name}
               installBusy={install.isPending && install.variables === m.name}
+              fixBusy={fixBaseUrl.isPending && fixBaseUrl.variables === m.name}
             />
           ))}
         </div>
@@ -176,15 +187,18 @@ fleet-ssh add <peer-name> <peer-tailscale-ip> <peer-user>`}
 }
 
 function MachineCard({
-  m, onPing, onBootstrap, onInstall, pingBusy, bootstrapBusy, installBusy,
+  m, onPing, onBootstrap, onInstall, onFixBaseUrl,
+  pingBusy, bootstrapBusy, installBusy, fixBusy,
 }: {
   m: Machine;
   onPing: () => void;
   onBootstrap: () => void;
   onInstall: () => void;
+  onFixBaseUrl: () => void;
   pingBusy: boolean;
   bootstrapBusy: boolean;
   installBusy: boolean;
+  fixBusy: boolean;
 }) {
   const online = Boolean(m.online);
   const harnessOk = Boolean(m.harness_installed);
@@ -253,6 +267,26 @@ function MachineCard({
         <div className="text-xs text-muted-foreground rounded border border-border/60 bg-muted/20 px-2 py-1.5 flex items-start gap-1.5">
           <Package className="h-3 w-3 shrink-0 mt-0.5" />
           <span>SSH works but harness is missing. Click <b>Install</b> below to clone + run <code>./install.sh</code> over fleet-ssh.</span>
+        </div>
+      )}
+      {typeof m.anthropic_base_url_issue === "string" && m.anthropic_base_url_issue && (
+        <div className="text-xs rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 space-y-1.5">
+          <div className="flex items-start gap-1.5 text-amber-600 dark:text-amber-400 font-medium">
+            <ShieldAlert className="h-3 w-3 shrink-0 mt-0.5" />
+            <span>ANTHROPIC_BASE_URL leftover detected</span>
+          </div>
+          <div className="font-mono text-[10px] break-all text-muted-foreground">
+            {m.anthropic_base_url_issue}
+          </div>
+          <div className="text-muted-foreground">
+            Claude on this Mac will fail with <code>ConnectionRefused</code> unless
+            the proxy daemon is running. If you don't use cc-switch /
+            claude-code-router, click Fix to strip it from the shell rc.
+          </div>
+          <Button size="sm" variant="outline" onClick={onFixBaseUrl} disabled={fixBusy}
+                  className="border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20">
+            {fixBusy ? "Fixing…" : "Fix shell env"}
+          </Button>
         </div>
       )}
 

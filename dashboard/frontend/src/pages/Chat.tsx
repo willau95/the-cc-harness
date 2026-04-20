@@ -85,7 +85,7 @@ export function ChatPage() {
   if (isLoading && !thread) return <PageSkeleton variant="detail" />;
 
   const status = agentDetail
-    ? deriveAgentStatus({ stale: agentDetail.stale, paused: agentDetail.agent.paused, process_alive: (agentDetail.agent as { process_alive?: boolean | null }).process_alive })
+    ? deriveAgentStatus({ stale: agentDetail.stale, paused: agentDetail.agent.paused, process_alive: (agentDetail.agent as { process_alive?: boolean | null }).process_alive, last_beat: agentDetail.last_beat })
     : undefined;
   const dotClass = status ? agentStatusDot[status] ?? agentStatusDotDefault : agentStatusDotDefault;
 

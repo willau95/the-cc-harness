@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, Inbox, ListChecks, MessageSquare, Users } from "lucide-react";
 import { Link, useNavigate, useParams } from "@/lib/router";
 import { agentsApi } from "@/api/agents";
+import type { AgentDetail as AgentDetailT } from "@/api/types";
 import { fleetApi } from "@/api/fleet";
 import { queryKeys } from "@/lib/queryKeys";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
@@ -82,7 +83,7 @@ export function AgentDetailPage() {
     );
   }
 
-  const status = deriveAgentStatus({ stale: data.stale, paused: data.agent.paused, process_alive: (data.agent as { process_alive?: boolean | null }).process_alive });
+  const status = deriveAgentStatus({ stale: data.stale, paused: data.agent.paused, process_alive: (data.agent as { process_alive?: boolean | null }).process_alive, last_beat: data.last_beat });
   const isPaused = Boolean(data.agent.paused);
 
   return (
@@ -140,7 +141,7 @@ const TABS = [
   { value: "events", label: "Events" },
 ];
 
-function AgentDetailTabs({ agentId, data }: { agentId: string; data: NonNullable<ReturnType<typeof import("@/api/agents").agentsApi.get> extends Promise<infer T> ? T : never> }) {
+function AgentDetailTabs({ agentId, data }: { agentId: string; data: AgentDetailT }) {
   const [tab, setTab] = useState<TabKey>("live");
   return (
     <div className="space-y-4">
@@ -157,7 +158,7 @@ function AgentDetailTabs({ agentId, data }: { agentId: string; data: NonNullable
   );
 }
 
-function AgentOverview({ data }: { data: NonNullable<ReturnType<typeof import("@/api/agents").agentsApi.get> extends Promise<infer T> ? T : never> }) {
+function AgentOverview({ data }: { data: AgentDetailT }) {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <section className="space-y-2">
@@ -223,7 +224,7 @@ function AgentOverview({ data }: { data: NonNullable<ReturnType<typeof import("@
   );
 }
 
-function AgentEvents({ data, agentId }: { data: NonNullable<ReturnType<typeof import("@/api/agents").agentsApi.get> extends Promise<infer T> ? T : never>; agentId: string }) {
+function AgentEvents({ data, agentId }: { data: AgentDetailT; agentId: string }) {
   return (
     <section className="space-y-2">
       <div className="border border-border rounded-lg overflow-hidden">
