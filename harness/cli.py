@@ -257,6 +257,21 @@ def init(role, name, project_name):
     click.echo(f"  Role:     {role}")
     click.echo(f"  Project:  {proj}")
     click.echo(f"  Folder:   {folder}")
+
+    # Warn about ANTHROPIC_BASE_URL — a common proxy leftover that causes
+    # claude to ConnectionRefused against a dead local port.
+    base_url = os.environ.get("ANTHROPIC_BASE_URL", "").strip()
+    if base_url:
+        click.echo(
+            f"\n[!] ANTHROPIC_BASE_URL={base_url} is set — claude will route through "
+            "that local proxy, not Anthropic directly."
+        )
+        click.echo(
+            "    If you don't intend to use a proxy, unset it + remove from ~/.zshrc:"
+        )
+        click.echo("      unset ANTHROPIC_BASE_URL")
+        click.echo("      sed -i.bak '/ANTHROPIC_BASE_URL/d' ~/.zshrc")
+
     click.echo(f"\nNext: run `claude` to start.")
 
 

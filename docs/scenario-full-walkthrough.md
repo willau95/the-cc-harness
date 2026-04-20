@@ -396,7 +396,8 @@ proposal 被创建时，harness 自动查找第一个 `role=critic` 的在跑 ag
 | Events 看不到 Mac-B 的 | peer harness < 0.2.0 没有 `events dump-json`；点 [ Update ] |
 | Proposals 一直 pending | 没有 `role=critic` 的 agent 在跑 |
 | `harness` not found after install | `exec zsh` 重载 shell |
-| `harness dashboard` 报 `Address already in use` | `pgrep -f "uvicorn.*dashboard" \| xargs kill -9` 杀旧实例，再跑 |
+| `harness dashboard` 报 `Address already in use` | `lsof -ti:9999 \| xargs kill -9` 杀旧实例，再跑 |
+| `claude` 报 `Unable to connect to API (ConnectionRefused)` | 你 shell 里有 `ANTHROPIC_BASE_URL` 指向一个没在跑的本地代理（cc-switch / claude-code-router / vibeproxy）。`unset ANTHROPIC_BASE_URL` + 从 `~/.zshrc` 删掉那行 + `exec zsh` + 重跑 claude。**这不是 harness 问题** — harness 用你 `claude login` 的订阅。|
 
 ---
 

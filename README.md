@@ -152,6 +152,30 @@ Quick ones:
 - Hooks silent → check `~/.harness/logs/hook.log`; PATH issues are 90%
 - Agent zombie in dashboard but `claude` open → re-run `harness init` in its folder to refresh skill tools
 
+### `claude` reports `Unable to connect to API (ConnectionRefused)`
+
+**harness doesn't manage auth** — `claude` uses your subscription OAuth after
+`claude login`. `ConnectionRefused` specifically means a local TCP port isn't
+listening, not that Anthropic is down. Check:
+
+```bash
+echo $ANTHROPIC_BASE_URL
+```
+
+If it prints `http://127.0.0.1:<port>`, you have a local Claude proxy tool
+(cc-switch / claude-code-router / vibeproxy) set up but its daemon isn't
+running. Either start the daemon, or if you don't use it anymore:
+
+```bash
+unset ANTHROPIC_BASE_URL
+sed -i.bak '/ANTHROPIC_BASE_URL/d' ~/.zshrc
+exec zsh                       # reload shell
+cd <agent-folder> && claude    # restart claude
+```
+
+`install.sh` and `harness init` both print a warning when this env var is set,
+so you'll see it before an agent gets stuck.
+
 ---
 
 ## Design influences

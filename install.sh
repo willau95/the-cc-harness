@@ -19,6 +19,41 @@ echo "=== the-cc-harness · install ==="
 echo "repo: $REPO_ROOT"
 echo
 
+# ---------- 0. Auth env sanity check ----------
+# harness uses whatever `claude` uses — default is subscription OAuth after
+# `claude login`. If the user has a local-proxy env var set (cc-switch /
+# claude-code-router / vibeproxy), claude tries to hit that proxy instead of
+# Anthropic. When the proxy isn't running, claude errors with
+# "Unable to connect to API (ConnectionRefused)" — a confusing symptom that
+# looks like a harness bug but isn't.
+_anthropic_url_in_rc=""
+for _rc in "$HOME/.zshrc" "$HOME/.zprofile" "$HOME/.bashrc" "$HOME/.bash_profile"; do
+    if [ -f "$_rc" ] && grep -q "^export ANTHROPIC_BASE_URL" "$_rc" 2>/dev/null; then
+        _anthropic_url_in_rc="$_rc"
+        break
+    fi
+done
+if [ -n "${ANTHROPIC_BASE_URL:-}" ] || [ -n "$_anthropic_url_in_rc" ]; then
+    cat <<EOS
+[!] Heads-up — ANTHROPIC_BASE_URL is set in your shell env.
+
+    Current value: ${ANTHROPIC_BASE_URL:-<in $_anthropic_url_in_rc>}
+
+This means \`claude\` will route through a local proxy (e.g. cc-switch /
+claude-code-router / vibeproxy), NOT Anthropic directly. If that proxy's
+daemon is not running, every agent you spawn will hang on
+"Unable to connect to API (ConnectionRefused)".
+
+    · If you use that proxy → make sure its daemon is running BEFORE \`claude\`
+    · If you don't → unset it: \`unset ANTHROPIC_BASE_URL\` + remove the
+      \`export ANTHROPIC_BASE_URL=...\` line from ${_anthropic_url_in_rc:-your shell rc}
+
+harness itself doesn't set this variable and uses your \`claude login\`
+subscription by default.
+EOS
+    echo
+fi
+
 # ---------- 1. Syncthing (for cross-machine mode; harmless if skipped) ----------
 if command -v syncthing >/dev/null 2>&1; then
     echo "✓ syncthing already installed"
