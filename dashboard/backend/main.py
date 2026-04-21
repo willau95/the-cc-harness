@@ -1252,22 +1252,24 @@ def api_machines() -> dict:
             "  2>/dev/null | head -1 || echo clean); "
             # Check claude is logged in — v2.1.40+ stores credentials in
             # macOS Keychain (security find-generic-password -s 'Claude Code-credentials')
-            # not ~/.claude/credentials.json. We probe by checking BOTH:
-            # file credentials OR a working keychain entry.
-            # Claude login probe is TWO-STAGE to avoid the false positive
-            # where a stale keychain entry exists but claude CLI still fails
-            # with 'Not logged in'. First: check credentials.json or keychain
-            # (fast). Second: check for a known-good claude binary path.
-            # Result values: yes (confirmed), stale (keychain present but claude
-            # v2.1.40+ doesn't consider it valid), missing (neither).
+            # not ~/.claude/credentials.json. Two-stage probe avoids the
+            # keychain-without-binary false positive.
+            # Claude ships via multiple installers (npm-global, Homebrew,
+            # the official installer → ~/.local/bin). SSH non-interactive
+            # shells often lack the PATH to find it, so probe explicit paths.
+            # Result values: yes (credentials present AND a claude binary
+            # exists), stale (credentials present but no binary — rare),
+            # missing (no credentials at all).
             "echo CLAUDE_LOGIN_$(if test -f $HOME/.claude/credentials.json; then "
             "  echo yes; "
             "elif security find-generic-password -s 'Claude Code-credentials' >/dev/null 2>&1; then "
-            "  if test -x $HOME/.local/bin/claude && test -L $HOME/.local/bin/claude; then "
-            "    echo yes; "
-            "  else "
-            "    echo stale; "  # keychain entry but no modern claude to use it
-            "  fi; "
+            "  CLAUDE_BIN=''; "
+            "  for p in $HOME/.local/bin/claude /opt/homebrew/bin/claude "
+            "    /usr/local/bin/claude $HOME/.npm-global/bin/claude "
+            "    $HOME/.volta/bin/claude; do "
+            "    if test -x \"$p\" || test -L \"$p\"; then CLAUDE_BIN=\"$p\"; break; fi; "
+            "  done; "
+            "  if test -n \"$CLAUDE_BIN\"; then echo yes; else echo stale; fi; "
             "else echo missing; fi); "
             # Also check for the 'stale binary' case: if /usr/local/bin/claude
             # exists AND differs from ~/.local/bin/claude target, warn —
