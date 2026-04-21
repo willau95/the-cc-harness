@@ -325,6 +325,11 @@ def equip(slug: str, agent_folder: Path | str) -> dict:
         if dst.exists():
             shutil.rmtree(dst)
         shutil.copytree(content, dst)
+        # Safety net for legacy skills that ship python tool scripts with
+        # `from harness import ...`: rewrite shebangs to the pipx venv python
+        # and chmod +x. Skills that use the CLI (harness <cmd>) are unaffected.
+        from .cli import _rewrite_tool_scripts
+        _rewrite_tool_scripts([dst])
         installed_to.append(str(dst))
 
     elif kind == "command":

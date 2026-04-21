@@ -183,10 +183,23 @@ def init(role, name, project_name, equip_csv):
     else:
         claude_md_path.write_text(harness_block)
 
+    # Figure out which of our two default skills the caller is overriding via
+    # --equip. If they pre-equip `harness` / `harness-core` (same SKILL.md name)
+    # or `harness-conventions`, skip our default install to avoid two skill dirs
+    # declaring `name: harness` — Claude Code discovers by frontmatter name and
+    # duplicates cause one to be ignored unpredictably.
+    equip_slugs = {s.strip() for s in (equip_csv or "").split(",") if s.strip()}
+    skip_harness_default = bool(equip_slugs & {"harness", "harness-core"})
+    skip_conventions_default = "harness-conventions" in equip_slugs
+    if skip_harness_default:
+        click.echo("  (skipping default `harness` skill install — overridden by --equip)")
+    if skip_conventions_default:
+        click.echo("  (skipping default `harness-conventions` skill install — overridden by --equip)")
+
     # Install harness skill into .claude/skills/
     skill_src = REPO_ROOT / "skill" / "harness"
     skill_dst = folder / ".claude" / "skills" / "harness"
-    if skill_src.exists():
+    if not skip_harness_default and skill_src.exists():
         if skill_dst.exists():
             shutil.rmtree(skill_dst)
         shutil.copytree(skill_src, skill_dst)
@@ -194,7 +207,7 @@ def init(role, name, project_name, equip_csv):
     # Install harness-conventions (detailed guidance, on-demand)
     conv_src = REPO_ROOT / "skill" / "harness-conventions"
     conv_dst = folder / ".claude" / "skills" / "harness-conventions"
-    if conv_src.exists():
+    if not skip_conventions_default and conv_src.exists():
         if conv_dst.exists():
             shutil.rmtree(conv_dst)
         shutil.copytree(conv_src, conv_dst)
@@ -769,6 +782,205 @@ def proposals_approve(kind, pid):
 def proposals_reject(kind, pid):
     rec = proposals.human_reject(kind, pid)
     click.echo(f"✗ rejected: {rec['id']}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Agent-facing subcommands — what SKILL.md used to dispatch via Python scripts
+# is now routed through the `harness` CLI binary. Benefits:
+#   · no shebang / venv concern (harness is on PATH via pipx)
+#   · no path-to-skill-folder hardcoding (was brittle when slug varied)
+#   · one canonical surface area; skills just say `harness checkpoint update ...`
+# The old Python scripts under skill/harness/tools/ still exist as a fallback
+# for any external skill that depends on them, but we don't steer agents there.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _json_emit(obj):
+    click.echo(json.dumps(obj, ensure_ascii=False, default=str))
+
+
+def _load_cwd_agent():
+    """Resolve the agent identity in cwd; emit error + exit(1) if missing."""
+    ident = identity.load_identity(Path.cwd())
+    if not ident:
+        _json_emit({"ok": False, "error": "no agent in cwd — run `harness init` first"})
+        sys.exit(1)
+    return ident
+
+
+@cli.group(name="checkpoint")
+def checkpoint_cmd():
+    """Task FSM: create / update / read agent's per-task checkpoint."""
+
+
+@checkpoint_cmd.command(name="update")
+@click.option("--task-id", default=None)
+@click.option("--create", is_flag=True)
+@click.option("--original-goal", default=None)
+@click.option("--deliverable-spec", default="")
+@click.option("--budget", type=int, default=None)
+@click.option("--state", default=None,
+              help="PROPOSED | IN_PROGRESS | BLOCKED | AWAITING_REVIEW | VERIFIED | DONE | ABANDONED")
+@click.option("--blocked-on", default=None)
+@click.option("--deliverable-ref", default=None)
+@click.option("--next-step", default=None)
+def checkpoint_update(task_id, create, original_goal, deliverable_spec, budget,
+                      state, blocked_on, deliverable_ref, next_step):
+    """Append a checkpoint entry (create a new task, or update an existing one)."""
+    ident = _load_cwd_agent()
+    folder = Path.cwd()
+    try:
+        if create:
+            if not original_goal:
+                _json_emit({"ok": False, "error": "--original-goal required with --create"})
+                sys.exit(1)
+            task_id_new = checkpoint.create_task(folder,
+                                                 original_goal=original_goal,
+                                                 deliverable_spec=deliverable_spec,
+                                                 budget=budget)
+            _json_emit({"ok": True, "task_id": task_id_new})
+        else:
+            if not task_id:
+                _json_emit({"ok": False, "error": "--task-id required (unless --create)"})
+                sys.exit(1)
+            updates = {}
+            if state: updates["state"] = state
+            if blocked_on: updates["blocked_on"] = blocked_on
+            if deliverable_ref: updates["deliverable_ref"] = deliverable_ref
+            if next_step: updates["next_step"] = next_step
+            t = checkpoint.update(folder, task_id, **updates)
+            _json_emit({"ok": True, "task_id": task_id, "task": t})
+    except Exception as e:
+        _json_emit({"ok": False, "error": str(e)})
+        sys.exit(1)
+
+
+@checkpoint_cmd.command(name="read")
+@click.option("--task-id", default=None,
+              help="If set, show only this task. Else all active tasks.")
+def checkpoint_read(task_id):
+    """Read active tasks (FSM state, next_step, blocked_on, budget…)."""
+    _load_cwd_agent()
+    folder = Path.cwd()
+    if task_id:
+        t = checkpoint.latest_for_task(folder, task_id)
+        _json_emit({"ok": True, "task": t})
+    else:
+        tasks = checkpoint.active_tasks(folder)
+        _json_emit({"ok": True, "active_count": len(tasks), "tasks": tasks})
+
+
+@cli.group(name="project-state")
+def project_state_cmd():
+    """Project-shared key-value state (across all agents on a project)."""
+
+
+@project_state_cmd.command(name="update")
+@click.option("--project", "project_slug", default=None)
+@click.option("--key", required=True)
+@click.option("--value", required=True,
+              help="Value string. If starts with '[' or '{' parsed as JSON.")
+def project_state_update(project_slug, key, value):
+    ident = _load_cwd_agent()
+    proj = project_slug or Path(ident["folder"]).name
+    try:
+        if value.startswith(("[", "{")):
+            value = json.loads(value)
+    except json.JSONDecodeError:
+        pass
+    project.update_state(proj, key, value, by=ident["agent_id"])
+    _json_emit({"ok": True, "project": proj, "key": key, "value": value})
+
+
+@project_state_cmd.command(name="read")
+@click.option("--project", "project_slug", default=None)
+def project_state_read(project_slug):
+    ident = identity.load_identity(Path.cwd())
+    proj = project_slug or (Path.cwd().name if not ident else Path(ident["folder"]).name)
+    state = project.read_state(proj)
+    members = project.active_members(proj)
+    _json_emit({"ok": True, "project": proj,
+                "state": state["values"], "state_meta": state["meta"],
+                "members": members})
+
+
+@cli.group(name="propose")
+def propose_cmd():
+    """Self-evolution: propose a new skill / role-lesson / budget extension."""
+
+
+@propose_cmd.command(name="skill")
+@click.option("--slug", required=True)
+@click.option("--rationale", required=True,
+              help="Why this skill? e.g. 'I've done X 3x this week'")
+@click.option("--content", required=True,
+              help="Skill body (SKILL.md content) or @path to read from a file")
+@click.option("--tags", default="")
+def propose_skill(slug, rationale, content, tags):
+    ident = _load_cwd_agent()
+    if content.startswith("@"):
+        content = Path(content[1:]).read_text()
+    rec = proposals.create("skill", ident["agent_id"], {
+        "slug": slug, "rationale": rationale, "content": content,
+        "tags": [t.strip() for t in tags.split(",") if t.strip()],
+    })
+    _json_emit({"ok": True, "proposal_id": rec["id"], "status": rec["status"]})
+
+
+@propose_cmd.command(name="role")
+@click.option("--role", required=True)
+@click.option("--lesson", required=True)
+@click.option("--evidence", default="")
+def propose_role(role, lesson, evidence):
+    ident = _load_cwd_agent()
+    rec = proposals.create("role", ident["agent_id"], {
+        "role": role, "lesson": lesson, "evidence": evidence,
+    })
+    _json_emit({"ok": True, "proposal_id": rec["id"], "status": rec["status"]})
+
+
+@propose_cmd.command(name="budget")
+@click.option("--task-id", required=True)
+@click.option("--extra", type=int, required=True)
+@click.option("--reason", required=True)
+def propose_budget(task_id, extra, reason):
+    ident = _load_cwd_agent()
+    rec = proposals.create("budget", ident["agent_id"], {
+        "task_id": task_id, "extra": extra, "reason": reason,
+        "folder": str(Path.cwd().resolve()),
+    })
+    _json_emit({"ok": True, "proposal_id": rec["id"], "status": rec["status"]})
+
+
+@cli.command(name="notify-human")
+@click.option("--urgency", required=True,
+              type=click.Choice(["info", "attention", "blocker"]))
+@click.option("--reason", required=True)
+@click.option("--context", default="")
+@click.option("--suggested-action", default=None)
+def notify_human_cli(urgency, reason, context, suggested_action):
+    """Cross-machine async signal to the human operator."""
+    ident = _load_cwd_agent()
+    env = mailbox.send(
+        from_id=ident["agent_id"],
+        to_id="human@dashboard",
+        subject=f"notify[{urgency}]",
+        body=f"## {reason}\n\n{context}\n\n**suggested:** {suggested_action or '(none)'}",
+    )
+    _json_emit({"ok": True, "msg_id": env["msg_id"], "urgency": urgency})
+
+
+@cli.command(name="request-budget")
+@click.option("--task-id", required=True)
+@click.option("--extra", type=int, required=True)
+@click.option("--reason", required=True)
+def request_budget_cli(task_id, extra, reason):
+    """Ask for more iterations on a budgeted task. Proposal → critic → human."""
+    ident = _load_cwd_agent()
+    rec = proposals.create("budget", ident["agent_id"], {
+        "task_id": task_id, "extra": extra, "reason": reason,
+        "folder": str(Path.cwd().resolve()),
+    })
+    _json_emit({"ok": True, "proposal_id": rec["id"], "status": rec["status"]})
 
 
 @cli.command()
