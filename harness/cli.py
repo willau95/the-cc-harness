@@ -285,9 +285,12 @@ def init(role, name, project_name, equip_csv):
             }],
         }],
     }
+    # Claude Code Bash permission syntax: `Bash(<prefix>:*)` auto-approves
+    # `<prefix>` with any trailing args. `Bash(harness *:*)` (space before :*)
+    # doesn't match how claude parses — it stays gated. Use `Bash(harness:*)`.
     our_allows = [
-        "Bash(python -m harness.*:*)",
-        "Bash(harness *:*)",
+        "Bash(python -m harness:*)",
+        "Bash(harness:*)",
         f"Read({config.HARNESS_ROOT}/**)",
         f"Write({config.HARNESS_ROOT}/**)",
         f"Edit({config.HARNESS_ROOT}/**)",
@@ -408,12 +411,15 @@ def status():
 @click.argument("to")
 @click.argument("subject")
 @click.argument("body")
-@click.option("--from", "from_id", default="human@dashboard",
-              help="Sender id; defaults to human@dashboard.")
+@click.option("--from", "from_id", default=None,
+              help="Sender id; defaults to the agent in cwd, or human@dashboard if no agent found.")
 def send(to, subject, body, from_id):
-    """Send a message. (Testing tool — normally agents do this via skill.)"""
+    """Send a message."""
+    if not from_id:
+        ident = identity.load_identity(Path.cwd())
+        from_id = ident["agent_id"] if ident else "human@dashboard"
     env = mailbox.send(from_id, to, subject, body)
-    click.echo(f"✓ sent {env['msg_id']} to {to}")
+    click.echo(f"✓ sent {env['msg_id']} to {to} (from {from_id})")
 
 
 @cli.command()
