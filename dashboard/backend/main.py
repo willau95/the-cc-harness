@@ -1254,9 +1254,21 @@ def api_machines() -> dict:
             # macOS Keychain (security find-generic-password -s 'Claude Code-credentials')
             # not ~/.claude/credentials.json. We probe by checking BOTH:
             # file credentials OR a working keychain entry.
-            "echo CLAUDE_LOGIN_$((test -f $HOME/.claude/credentials.json "
-            "  || security find-generic-password -s 'Claude Code-credentials' "
-            "     >/dev/null 2>&1) && echo yes || echo missing); "
+            # Claude login probe is TWO-STAGE to avoid the false positive
+            # where a stale keychain entry exists but claude CLI still fails
+            # with 'Not logged in'. First: check credentials.json or keychain
+            # (fast). Second: check for a known-good claude binary path.
+            # Result values: yes (confirmed), stale (keychain present but claude
+            # v2.1.40+ doesn't consider it valid), missing (neither).
+            "echo CLAUDE_LOGIN_$(if test -f $HOME/.claude/credentials.json; then "
+            "  echo yes; "
+            "elif security find-generic-password -s 'Claude Code-credentials' >/dev/null 2>&1; then "
+            "  if test -x $HOME/.local/bin/claude && test -L $HOME/.local/bin/claude; then "
+            "    echo yes; "
+            "  else "
+            "    echo stale; "  # keychain entry but no modern claude to use it
+            "  fi; "
+            "else echo missing; fi); "
             # Also check for the 'stale binary' case: if /usr/local/bin/claude
             # exists AND differs from ~/.local/bin/claude target, warn —
             # the npm-global v2.1.19 leftover interferes with v2.1.40+
@@ -1293,6 +1305,10 @@ def api_machines() -> dict:
                     base_url_issue = payload  # the offending export line
             elif line.startswith("CLAUDE_LOGIN_"):
                 payload = line[len("CLAUDE_LOGIN_"):]
+                # yes = confirmed login / stale = keychain exists but likely
+                # broken (v2.1.19 shim case) / missing = no credentials at all.
+                # For UI we treat stale as "not really logged in" so the card's
+                # warning fires correctly instead of lying.
                 claude_logged_in = (payload == "yes")
             elif line.startswith("STALE_BINARY_"):
                 payload = line[len("STALE_BINARY_"):]
